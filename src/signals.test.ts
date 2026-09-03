@@ -187,6 +187,19 @@ describe('analyzeTest', () => {
       '});',
     ].join('\n');
     expect(measureLiteralBlocks(text.split('\n'))).toEqual({ blocks: 2, lines: 9 });
+    const nested = [
+      'expect(a).toEqual({',
+      '  b: 1,',
+      '  c: expect.objectContaining({',
+      '    d: 2,',
+      '  }),',
+      '});',
+      'expect(z).toEqual([',
+      '  1,',
+    ].join('\n');
+    const measured = measureLiteralBlocks(nested.split('\n'));
+    expect(measured.blocks).toBe(2);
+    expect(measured.lines).toBeLessThanOrEqual(nested.split('\n').length);
     const s = analyze(text);
     expect(s.largeLiteralExpects).toBe(2);
     expect(s.literalLines).toBe(9);
@@ -201,6 +214,44 @@ describe('analyzeTest', () => {
       "assert.strictEqual(e, 'x');",
     ].join('\n');
     const s = analyze(text);
+    expect(s.expects).toBe(5);
+    expect(s.weakExpects).toBe(2);
+    expect(s.literalExpects).toBe(3);
+  });
+
+  it('understands ava, tap, and chai assertions', () => {
+    const ava = [
+      "test('x', (t) => {",
+      '  t.is(add(1, 2), 3);',
+      "  t.deepEqual(parse('a'), { a: 1 });",
+      '  t.truthy(result);',
+      '  t.true(ok);',
+      '  t.throws(() => bad());',
+      '});',
+    ].join('\n');
+    let s = analyze(ava);
+    expect(s.expects).toBe(5);
+    expect(s.weakExpects).toBe(2);
+    expect(s.literalExpects).toBe(2);
+    const tap = [
+      't.equal(res.statusCode, 200);',
+      't.ok(body);',
+      't.same(body, {',
+      '  a: 1,',
+      '});',
+    ].join('\n');
+    s = analyze(tap);
+    expect(s.expects).toBe(3);
+    expect(s.weakExpects).toBe(1);
+    expect(s.largeLiteralExpects).toBe(1);
+    const chai = [
+      'expect(x).to.equal(1);',
+      'expect(y).to.deep.equal({ a: 1 });',
+      'expect(z).to.exist;',
+      'expect(w).to.be.ok;',
+      'expect(list).to.have.length(3);',
+    ].join('\n');
+    s = analyze(chai);
     expect(s.expects).toBe(5);
     expect(s.weakExpects).toBe(2);
     expect(s.literalExpects).toBe(3);

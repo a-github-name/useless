@@ -6,9 +6,13 @@ export const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/;
 
 const LITERAL_START = /(['"`\d[{-]|true|false|null)/.source;
 
+/** ava / tap / node:test `t.*` assertions. */
+const TAP_ASSERT_RE =
+  /\bt\.(is|not|deepEqual|notDeepEqual|like|true|false|truthy|falsy|throws|notThrows|throwsAsync|notThrowsAsync|regex|notRegex|snapshot|pass|fail|assert|equal|notEqual|same|notSame|strictSame|ok|notOk|match|doesNotMatch|type|has|hasStrict|rejects|resolves|resolveMatch|error|emits|end|plan)\s*\(/g;
+
 /** Opening line of a multi-line literal expectation, e.g. `expect(x).toEqual({`. */
 const LARGE_LITERAL_OPEN =
-  /(\.(toEqual|toStrictEqual|toMatchObject)\(|assert\.(deepEqual|deepStrictEqual)\([^\n]*,)\s*[[{]\s*$/;
+  /(\.(toEqual|toStrictEqual|toMatchObject)\(|\.to(\.deep)?\.(equal|eql)\(|(assert\.(deepEqual|deepStrictEqual)|t\.(deepEqual|same|strictSame|like))\([^\n]*,)\s*[[{]\s*$/;
 
 /**
  * Sum the lines occupied by multi-line literal expectations. Walks from each
@@ -30,7 +34,8 @@ export function measureLiteralBlocks(lines: string[]): { blocks: number; lines: 
       const nextIndent = next.length - next.trimStart().length;
       if (nextIndent <= indent && /^[\]}]/.test(next.trim())) break;
     }
-    total += j - i + 1;
+    total += Math.min(j, lines.length - 1) - i + 1;
+    i = j;
   }
   return { blocks, lines: total };
 }
@@ -100,7 +105,10 @@ export function analyzeTest(input: AnalyzeInput): Signals {
       text,
       /^\s*(it|test)(\.(each|skip|only|todo|concurrent|skipIf|runIf|fixme|fails))?(\([^)]*\))?\s*\(/gm,
     ),
-    expects: count(text, /\bexpect(\.soft)?\s*\(/g) + count(text, /\bassert(\.\w+)?\s*\(/g),
+    expects:
+      count(text, /\bexpect(\.soft)?\s*\(/g) +
+      count(text, /\bassert(\.\w+)?\s*\(/g) +
+      count(text, TAP_ASSERT_RE),
     weakExpects:
       count(
         text,
@@ -110,7 +118,12 @@ export function analyzeTest(input: AnalyzeInput): Signals {
       count(text, /(?<!\.not)\.toHaveBeenCalled\s*\(/g) +
       count(text, /\.toBeGreaterThan(OrEqual)?\(\s*[01]\s*\)/g) +
       count(text, /\.not\.toBe(Undefined|Null)?\(\s*(undefined|null|''|""|0)?\s*\)/g) +
-      count(text, /\bassert(\.ok)?\s*\(/g),
+      count(text, /\bassert(\.ok)?\s*\(/g) +
+      count(text, /\bt\.(ok|truthy|true|pass|notOk|falsy)\s*\(/g) +
+      count(
+        text,
+        /\.to(\.not)?\.(exist|be\.ok|be\.true|be\.truthy|be\.undefined|be\.defined|be\.a\(|be\.an\(|be\.instanceOf|be\.instanceof)/g,
+      ),
     callExpects,
     callExpectsWith,
     callExpectsCounted,
@@ -149,12 +162,26 @@ export function analyzeTest(input: AnalyzeInput): Signals {
           `\\bassert\\.(equal|strictEqual|deepEqual|deepStrictEqual)\\([^\\n]*,\\s*${LITERAL_START}`,
           'g',
         ),
+      ) +
+      count(
+        text,
+        new RegExp(
+          `\\bt\\.(is|equal|same|strictSame|deepEqual|like)\\([^\\n]*,\\s*${LITERAL_START}`,
+          'g',
+        ),
+      ) +
+      count(
+        text,
+        new RegExp(`\\.to(\\.deep)?\\.(equal|eql|have\\.length(Of)?)\\(\\s*${LITERAL_START}`, 'g'),
       ),
     dataSubject,
     fixtureImports: count(text, /from\s+['"][^'"]+\.json['"]/g),
     largeLiteralExpects: literal.blocks,
     literalLines: literal.lines,
-    snapshotAsserts: count(text, /\.toMatch(File)?Snapshot\s*\(/g),
+    snapshotAsserts: count(
+      text,
+      /\.toMatch(File)?Snapshot\s*\(|\bt\.(snapshot|matchSnapshot)\s*\(/g,
+    ),
     inlineSnapshots: count(text, /\.toMatchInlineSnapshot\s*\(/g),
     digestPins: count(text, /['"`](sha256:)?[0-9a-f]{64}['"`]/g),
     countPins: count(text, /\.toHaveLength\((\d{2,}|[4-9])\)/g),

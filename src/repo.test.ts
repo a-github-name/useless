@@ -52,6 +52,13 @@ function makeRepo(): string {
     ].join('\n'),
   );
   writeFileSync(join(root, 'src/notes.md'), 'x');
+  mkdirSync(join(root, 'test/fixtures'), { recursive: true });
+  mkdirSync(join(root, 'src/__tests__'), { recursive: true });
+  writeFileSync(join(root, 'test/app.js'), "it('boots', () => { expect(1).toBe(1); });\n");
+  writeFileSync(join(root, 'test/helpers.js'), 'export const h = 1;\n');
+  writeFileSync(join(root, 'test/support.js'), 'export const s = 1;\n');
+  writeFileSync(join(root, 'test/fixtures/data.js'), "it('not really', () => {});\n");
+  writeFileSync(join(root, 'src/__tests__/util.js'), "test('u', () => { expect(2).toBe(2); });\n");
   git(root, 'add', '.');
   git(root, 'commit', '-q', '-m', 'one');
   writeFileSync(
@@ -66,8 +73,21 @@ function makeRepo(): string {
 describe('repo plumbing', () => {
   const root = makeRepo();
 
-  it('lists tracked test files only', () => {
-    expect(listTestFiles(root)).toEqual(['src/add.test.ts', 'src/grep.spec.ts']);
+  it('lists tracked test files, including conventional test directories', () => {
+    expect(listTestFiles(root)).toEqual([
+      'src/__tests__/util.js',
+      'src/add.test.ts',
+      'src/grep.spec.ts',
+      'test/app.js',
+      'test/helpers.js',
+      'test/support.js',
+    ]);
+  });
+
+  it('drops test-directory files that contain no tests', () => {
+    expect(rank({ root }).map((r) => r.file)).not.toContain('test/support.js');
+    expect(rank({ root }).map((r) => r.file)).toContain('test/app.js');
+    expect(rank({ root }).map((r) => r.file)).toContain('src/__tests__/util.js');
   });
 
   it('finds the co-located source by name', () => {
@@ -91,9 +111,9 @@ describe('repo plumbing', () => {
 
   it('ranks the source-grepping test above the real one', () => {
     const rows = rank({ root });
-    expect(rows.map((r) => r.file)).toEqual(['src/grep.spec.ts', 'src/add.test.ts']);
+    expect(rows[0]?.file).toBe('src/grep.spec.ts');
     expect(rows[0]?.verdict).toBe('delete-or-rewrite');
-    expect(rows[1]?.verdict).toBe('keep');
+    expect(rows.find((r) => r.file === 'src/add.test.ts')?.verdict).toBe('keep');
   });
 });
 

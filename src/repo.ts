@@ -10,21 +10,44 @@ export const DEFAULT_PATTERNS = [
   '*.test.tsx',
   '*.test.js',
   '*.test.jsx',
+  '*.test.mjs',
   '*.spec.ts',
   '*.spec.tsx',
   '*.spec.js',
+  '*test.ts',
+  '*__tests__/*',
+  'test/*',
+  'tests/*',
+  '*/test/*',
+  '*/tests/*',
 ];
+
+/** Paths under a test directory that are helpers, fixtures, or generated output rather than tests. */
+const NOT_A_TEST_RE =
+  /(^|\/)(fixtures?|helpers?|utils?|mocks?|__mocks__|__snapshots__|snapshots?|support|setup|stubs?|data|assets|__fixtures__)(\/|$)|\.(d\.ts|snap|json|md|html|css|map)$/;
 
 function git(root: string, args: string[]): string {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 });
 }
 
-/** Tracked test files, relative to `root`, via `git ls-files`. */
+const CODE_RE = /\.[cm]?[jt]sx?$/;
+
+/**
+ * Tracked test files, relative to `root`, via `git ls-files`. Files under a
+ * test directory count when they are code and not obviously a helper or
+ * fixture; `collectRepo` later drops anything with no test blocks.
+ */
 export function listTestFiles(root: string, patterns = DEFAULT_PATTERNS): string[] {
+  const seen = new Set<string>();
   return git(root, ['ls-files', '--', ...patterns])
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line && TEST_FILE_RE.test(line));
+    .filter((line) => {
+      if (!line || seen.has(line) || !CODE_RE.test(line) || /node_modules\//.test(line))
+        return false;
+      seen.add(line);
+      return TEST_FILE_RE.test(line) || !NOT_A_TEST_RE.test(line);
+    });
 }
 
 const SOURCE_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
@@ -46,7 +69,16 @@ export type ChurnIndex = Map<string, Set<string>>;
 export function buildChurnIndex(root: string): ChurnIndex {
   const index: ChurnIndex = new Map();
   let commit = '';
-  for (const raw of git(root, ['log', '--format=COMMIT %H', '--name-only']).split('\n')) {
+  let log = '';
+  try {
+    log = git(root, ['log', '--format=COMMIT %H', '--name-only']);
+  } catch (error) {
+    process.stderr.write(
+      `useless: git log failed (${error instanceof Error ? error.message.split('\n')[0] : String(error)}); lockstep signal disabled\n`,
+    );
+    return index;
+  }
+  for (const raw of log.split('\n')) {
     const line = raw.trim();
     if (line.startsWith('COMMIT ')) {
       commit = line.slice(7);
@@ -192,7 +224,7 @@ export function collectRepo(options: CollectOptions): Signals[] {
   }));
   const duplicates = findDuplicates(files);
   const similar = findSimilar(files);
-  return files.map(({ file, text }) => {
+  const signals = files.map(({ file, text }) => {
     const source = siblingSource(root, file);
     return analyzeTest({
       file,
@@ -205,4 +237,6 @@ export function collectRepo(options: CollectOptions): Signals[] {
       similarTo: duplicates.has(file) ? null : (similar.get(file) ?? null),
     });
   });
+  // A file under test/ with no test blocks is a helper or fixture, not a test.
+  return signals.filter((row) => row.tests > 0 || TEST_FILE_RE.test(row.file));
 }
