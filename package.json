@@ -1,5 +1,5 @@
 {
-  "name": "useless",
+  "name": "useless-tests",
   "version": "0.1.0",
   "description": "Rank a repo's test files by how useless they are: cost carried versus regressions they can plausibly catch.",
   "type": "module",

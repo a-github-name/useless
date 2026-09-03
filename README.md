@@ -13,10 +13,12 @@ It works on any git checkout with Vitest, Jest, or Playwright tests. No config,
 no dependencies, no AST: a handful of regexes over test text plus `git log`.
 
 ```sh
-npx useless                      # markdown table of the 40 worst files
-npx useless --top 0 --json all.json
-npx useless --root ../other-repo --min-score 25
+npx useless-tests                      # markdown table of the 40 worst files
+npx useless-tests --top 0 --json all.json
+npx useless-tests --root ../other-repo --min-score 25
 ```
+
+The package is `useless-tests` on npm; the installed binary is `useless`.
 
 Fold runtime into the score by handing it a JSON report first:
 
@@ -97,11 +99,14 @@ Each signal is normalised to [0, 1] and weighted. Weights sum to 100.
 - The lockstep signal cannot tell "restates the implementation" from "the
   feature was built test-first in the same commits". It only fires once the
   source has enough history to make coincidence unlikely.
+- Fixture strings that *contain* a smell read as the smell. The scorer cannot
+  tell `expect(src).toContain('export')` from a string literal holding that
+  text. Its own `src/signals.test.ts` scores 29 for exactly this reason.
 
 ## Library
 
 ```ts
-import { rank, analyzeTest, score, WEIGHTS } from 'useless';
+import { rank, analyzeTest, score, WEIGHTS } from 'useless-tests';
 
 const rows = rank({ root: '/path/to/repo' });      // Scored[], most useless first
 const signals = analyzeTest({ file, text, source, sourceText, churn, timing });
@@ -130,7 +135,11 @@ pnpm dev --root ../some-repo
 ```
 
 The scorer's own tests are contract tests over synthetic inputs and a throwaway
-git repo. Running `useless` on this repo should say `keep` for all of them.
+git repo. Running `useless` on this repo is a live demo of its blind spot: the
+signals test is flagged `delete-or-rewrite` because its inputs are the patterns
+it detects, and the repo test shells out to real `git` because git plumbing is
+the unit under test. The score test, which feeds plain numbers in, scores under
+one.
 
 ## Origin
 

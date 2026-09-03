@@ -21,10 +21,10 @@ ten minutes; otherwise skip `--timings`.
 
 ```sh
 npx vitest run --reporter=json --outputFile=.vitest.json   # or jest --json --outputFile
-npx useless --timings .vitest.json --top 40 --json useless.json
+npx useless-tests --timings .vitest.json --top 40 --json useless.json
 ```
 
-If `useless` is not installed: `pnpm dlx useless` or clone
+If it is not installed, `pnpm dlx useless-tests` works, or clone
 `~/projects/useless` and run `pnpm dev --root <repo>`.
 
 Read the three summary lines and the table. Keep `useless.json`; it holds every
