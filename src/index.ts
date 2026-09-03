@@ -1,9 +1,9 @@
-export { collectRepo, listTestFiles, parseTimings, siblingSource } from './repo.js';
+export { collectRepo, findDuplicates, listTestFiles, parseTimings, siblingSource } from './repo.js';
 export type { CollectOptions } from './repo.js';
 export { markdownTable, summarize, summaryLines } from './report.js';
 export type { Summary } from './report.js';
 export { VERDICT_ORDER, WEIGHTS, score } from './score.js';
-export { analyzeTest } from './signals.js';
+export { analyzeTest, countFunctions, measureLiteralBlocks } from './signals.js';
 export type { AnalyzeInput } from './signals.js';
 export type { Churn, Scored, SignalName, Signals, Timing, Verdict } from './types.js';
 

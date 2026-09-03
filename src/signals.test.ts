@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeTest } from './signals.js';
+import { analyzeTest, countFunctions, measureLiteralBlocks } from './signals.js';
 import type { Churn } from './types.js';
 
 const churn: Churn = { testCommits: 1, sourceCommits: 1, coChangeCommits: 1 };
@@ -77,6 +77,16 @@ describe('analyzeTest', () => {
       'expect(JSON.parse(data).length).toBe(3);',
     ].join('\n');
     expect(analyze(fixture).repoTextAsserts).toBe(0);
+    const helper = [
+      "const read = (p: string) => readFileSync(join(root, p), 'utf8');",
+      "expect(read('components/App.tsx')).not.toContain('legacy');",
+    ].join('\n');
+    expect(analyze(helper).repoTextAsserts).toBe(1);
+    const listing = [
+      "const files = readdirSync(join(root, 'src')).filter((f) => f.endsWith('.tsx'));",
+      "for (const f of files) expect(read(f)).not.toMatch(/from '\\.\\.\\/legacy'/);",
+    ].join('\n');
+    expect(analyze(listing).repoTextAsserts).toBe(1);
     const tmp = [
       "const dir = mkdtempSync('x');",
       "writeFileSync(join(dir, 'out.ts'), 'export {}');",
@@ -117,14 +127,106 @@ describe('analyzeTest', () => {
     expect(s.deletedFileAsserts).toBe(1);
   });
 
-  it('marks data subjects by path, JSON import, or a source with few functions', () => {
+  it('marks data subjects by config path or a source with no real functions', () => {
     expect(analyze('', 'src/config/layers.test.ts').dataSubject).toBe(true);
-    expect(analyze("import cases from './cases.json';").dataSubject).toBe(true);
+    expect(analyze("import cases from './cases.json';").dataSubject).toBe(false);
     expect(
       analyze('', 'src/thing.test.ts', 'export const A = 1;\nexport const B = 2;').dataSubject,
     ).toBe(true);
-    const fns = 'export function a() {}\nexport const b = () => 1;\nexport function c() {}';
-    expect(analyze('', 'src/thing.test.ts', fns).dataSubject).toBe(false);
+    const oneFn = 'export function atomicWrite(p: string) {\n  return p;\n}\n';
+    expect(analyze('', 'src/thing.test.ts', oneFn).dataSubject).toBe(false);
+    const bigTable = `export const rows = [\n${'  { a: 1 },\n'.repeat(90)}];\nexport const pick = (i: number) => rows[i];\n`;
+    expect(analyze('', 'src/thing.test.ts', bigTable).dataSubject).toBe(true);
+    const methods =
+      'class S {\n  get(id: string) {\n    return id;\n  }\n  async put(id: string): Promise<void> {\n  }\n  static make() {\n  }\n}\n';
+    expect(countFunctions(methods)).toBe(3);
+    expect(analyze('', 'src/thing.test.ts', methods).dataSubject).toBe(false);
+  });
+
+  it('measures multi-line literal expectations in lines, not just count', () => {
+    const text = [
+      "it('a', () => {",
+      '  expect(out).toEqual({',
+      '    a: 1,',
+      '    b: [',
+      '      2,',
+      '    ],',
+      '  });',
+      '  expect(x).toBe(1);',
+      '  assert.deepStrictEqual(y, [',
+      '    1,',
+      '  ]);',
+      '});',
+    ].join('\n');
+    expect(measureLiteralBlocks(text.split('\n'))).toEqual({ blocks: 2, lines: 9 });
+    const s = analyze(text);
+    expect(s.largeLiteralExpects).toBe(2);
+    expect(s.literalLines).toBe(9);
+  });
+
+  it('understands node:test assert as assertions', () => {
+    const text = [
+      'assert.equal(a, 1);',
+      'assert.deepEqual(b, { x: 1 });',
+      'assert.ok(c);',
+      'assert(d);',
+      "assert.strictEqual(e, 'x');",
+    ].join('\n');
+    const s = analyze(text);
+    expect(s.expects).toBe(5);
+    expect(s.weakExpects).toBe(2);
+    expect(s.literalExpects).toBe(3);
+  });
+
+  it('counts snapshots, focused tests, real waits, and machine paths', () => {
+    const s = analyze(
+      [
+        "it.only('x', () => {});",
+        'expect(a).toMatchSnapshot();',
+        'expect(b).toMatchInlineSnapshot(`1`);',
+        'await new Promise((r) => setTimeout(r, 50));',
+        'await sleep(100);',
+        'const home = homedir();',
+        "const p = '/Users/someone/data.json';",
+        'const h2 = process.env.HOME;',
+      ].join('\n'),
+    );
+    expect(s.focused).toBe(1);
+    expect(s.snapshotAsserts).toBe(1);
+    expect(s.inlineSnapshots).toBe(1);
+    expect(s.realWaits).toBe(2);
+    expect(s.machinePaths).toBe(2);
+    const overridden = analyze("const home = homedir();\nvi.stubEnv('HOME', dir);");
+    expect(overridden.machinePaths).toBe(0);
+    expect(analyze("env: { HOME: '/Users/example' }").machinePaths).toBe(0);
+    const faked = analyze('vi.useFakeTimers();\nawait new Promise((r) => setTimeout(r, 50));');
+    expect(faked.realWaits).toBe(0);
+  });
+
+  it('only counts python when it is actually spawned', () => {
+    const fixture = "await fs.writeFile(path.join(dir, 'render_scene.py'), 'print(1)');";
+    expect(analyze(fixture).pythonShellouts).toBe(0);
+    expect(analyze("spawnSync('uv', ['run', 'x.py']);").pythonShellouts).toBe(1);
+    expect(analyze("command: 'python3',").pythonShellouts).toBe(1);
+  });
+
+  it('a fake with a readFile method is not a repo read', () => {
+    const s = analyze(
+      [
+        "const sandbox = { readFile: vi.fn().mockResolvedValue('x') };",
+        'expect(sandbox.readFile).toHaveBeenCalledTimes(2);',
+        "expect(out).toContain('main.ts');",
+      ].join('\n'),
+    );
+    expect(s.repoTextAsserts).toBe(0);
+    expect(s.sourceTextAsserts).toBe(0);
+  });
+
+  it('markup in rendered output is not a source-text assertion', () => {
+    const s = analyze(
+      "expect(body).toContain('<loc>https://x.com/</loc>');\nexpect(html).toContain('<p>hi</p>');",
+    );
+    expect(s.sourceTextAsserts).toBe(0);
   });
 
   it('passes churn and timing through and counts lines', () => {

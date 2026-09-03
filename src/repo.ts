@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { TEST_FILE_RE, analyzeTest } from './signals.js';
@@ -120,20 +121,39 @@ export type CollectOptions = {
   timings?: Map<string, Timing>;
 };
 
+/** Map each file to the first file (in listing order) with identical whitespace-stripped content. */
+export function findDuplicates(files: Array<{ file: string; text: string }>): Map<string, string> {
+  const firstByHash = new Map<string, string>();
+  const duplicates = new Map<string, string>();
+  for (const { file, text } of files) {
+    const hash = createHash('sha1').update(text.replace(/\s+/g, '')).digest('hex');
+    const first = firstByHash.get(hash);
+    if (first) duplicates.set(file, first);
+    else firstByHash.set(hash, file);
+  }
+  return duplicates;
+}
+
 /** Read every test file in the repo and extract its signals. */
 export function collectRepo(options: CollectOptions): Signals[] {
   const root = resolve(options.root);
   const churn = buildChurnIndex(root);
   const timings = options.timings ?? new Map<string, Timing>();
-  return listTestFiles(root, options.patterns).map((file) => {
+  const files = listTestFiles(root, options.patterns).map((file) => ({
+    file,
+    text: readFileSync(join(root, file), 'utf8'),
+  }));
+  const duplicates = findDuplicates(files);
+  return files.map(({ file, text }) => {
     const source = siblingSource(root, file);
     return analyzeTest({
       file,
-      text: readFileSync(join(root, file), 'utf8'),
+      text,
       source,
       sourceText: source ? readFileSync(join(root, source), 'utf8') : null,
       churn: churnFor(churn, file, source),
       timing: timings.get(file) ?? null,
+      duplicateOf: duplicates.get(file) ?? null,
     });
   });
 }

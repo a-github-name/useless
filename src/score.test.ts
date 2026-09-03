@@ -11,6 +11,7 @@ const base: Signals = {
   expects: 12,
   weakExpects: 1,
   callExpects: 0,
+  callExpectsWith: 0,
   mocks: 0,
   moduleMocks: 0,
   sourceTextAsserts: 0,
@@ -19,13 +20,20 @@ const base: Signals = {
   dataSubject: false,
   fixtureImports: 0,
   largeLiteralExpects: 0,
+  literalLines: 0,
+  snapshotAsserts: 0,
+  inlineSnapshots: 0,
   digestPins: 0,
   countPins: 0,
   deletedFileAsserts: 0,
   gatedSuites: 0,
   gitShellouts: 0,
   pythonShellouts: 0,
+  realWaits: 0,
+  machinePaths: 0,
   skipped: 0,
+  focused: 0,
+  duplicateOf: null,
   testCommits: 3,
   sourceCommits: 8,
   coChangeCommits: 2,
@@ -63,6 +71,7 @@ describe('score', () => {
         gitShellouts: 3,
         pythonShellouts: 3,
         digestPins: 10,
+        literalLines: 5000,
         skipped: 5,
         gatedSuites: 2,
         durationMs: 60_000,
@@ -94,6 +103,46 @@ describe('score', () => {
     expect(half.reasons).toContain('50% of expects are "mock was called"');
   });
 
+  it('argument-checked calls on injected fakes are discounted, bare calls are not', () => {
+    const bareInjected = score(withSignals({ callExpects: 12, moduleMocks: 0 }));
+    const withInjected = score(
+      withSignals({ callExpects: 12, callExpectsWith: 12, moduleMocks: 0 }),
+    );
+    const withMocked = score(withSignals({ callExpects: 12, callExpectsWith: 12, moduleMocks: 2 }));
+    expect(bareInjected.components.tautology).toBe(1);
+    expect(withMocked.components.tautology).toBeCloseTo(0.5);
+    expect(withInjected.components.tautology).toBeCloseTo(0.3);
+    expect(withInjected.verdict).toBe('keep');
+    expect(withInjected.reasons).toContain(
+      '100% of expects are "mock was called" (with args, injected fakes)',
+    );
+  });
+
+  it('duplicates are delete-duplicate with saturated cost', () => {
+    const dup = score(withSignals({ duplicateOf: 'src/other.test.ts' }));
+    expect(dup.verdict).toBe('delete-duplicate');
+    expect(dup.components.cost).toBe(1);
+    expect(dup.reasons).toContain('identical to src/other.test.ts');
+  });
+
+  it('home-directory reads and real waits raise environment; .only forces review', () => {
+    const home = score(withSignals({ machinePaths: 1 }));
+    expect(home.verdict).toBe('keep');
+    expect(home.reasons).toContain('reads the real home directory');
+    const waits = score(withSignals({ realWaits: 2 }));
+    expect(waits.verdict).toBe('keep');
+    expect(waits.components.environment).toBeCloseTo(2 / 3);
+    const focused = score(withSignals({ focused: 1 }));
+    expect(focused.verdict).toBe('review');
+    expect(focused.reasons).toContain('.only left in (1)');
+  });
+
+  it('a file with tests but no assertions says so', () => {
+    expect(score(withSignals({ expects: 0, weakExpects: 0, literalExpects: 0 })).reasons).toContain(
+      'no assertions found',
+    );
+  });
+
   it('python shell-outs route to move-to-integration', () => {
     expect(score(withSignals({ pythonShellouts: 2 })).verdict).toBe('move-to-integration');
   });
@@ -111,8 +160,13 @@ describe('score', () => {
     const literal = score(withSignals({ dataSubject: true, literalExpects: 11 }));
     expect(literal.verdict).toBe('rewrite-as-contract');
     expect(literal.reasons).toContain('92% literal assertions on a data module');
-    const large = score(withSignals({ largeLiteralExpects: 6, tests: 4, countPins: 4 }));
+    const large = score(withSignals({ largeLiteralExpects: 6, literalLines: 60, lines: 120 }));
     expect(large.verdict).toBe('rewrite-as-contract');
+    expect(large.reasons).toContain('50% of the file is literal expectation (6 blocks)');
+    const fewButBig = score(withSignals({ largeLiteralExpects: 2, literalLines: 60, lines: 120 }));
+    expect(fewButBig.verdict).toBe('keep');
+    const snapshots = score(withSignals({ snapshotAsserts: 3 }));
+    expect(snapshots.verdict).toBe('rewrite-as-contract');
   });
 
   it('lockstep needs history before it counts', () => {

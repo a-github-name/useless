@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { rank } from './index.js';
-import { buildChurnIndex, churnFor, listTestFiles, parseTimings, siblingSource } from './repo.js';
+import {
+  buildChurnIndex,
+  churnFor,
+  findDuplicates,
+  listTestFiles,
+  parseTimings,
+  siblingSource,
+} from './repo.js';
 
 function git(root: string, ...args: string[]): void {
   execFileSync('git', args, {
@@ -86,6 +93,17 @@ describe('repo plumbing', () => {
     expect(rows.map((r) => r.file)).toEqual(['src/grep.spec.ts', 'src/add.test.ts']);
     expect(rows[0]?.verdict).toBe('delete-or-rewrite');
     expect(rows[1]?.verdict).toBe('keep');
+  });
+});
+
+describe('findDuplicates', () => {
+  it('maps later copies to the first file with the same whitespace-stripped content', () => {
+    const dupes = findDuplicates([
+      { file: 'a.test.ts', text: "it('x', () => {\n  expect(1).toBe(1);\n});" },
+      { file: 'b.test.ts', text: "it('x',()=>{expect(1).toBe(1);});" },
+      { file: 'c.test.ts', text: "it('y', () => {});" },
+    ]);
+    expect([...dupes.entries()]).toEqual([['b.test.ts', 'a.test.ts']]);
   });
 });
 

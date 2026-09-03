@@ -6,33 +6,48 @@ export type Signals = {
   lines: number;
   sourceLines: number | null;
   tests: number;
+  /** `expect(...)` and `assert.*(...)` calls. */
   expects: number;
   /** Presence checks that pass for almost any output. */
   weakExpects: number;
-  /** `toHaveBeenCalled*` family. */
+  /** Every `toHaveBeenCalled*` assertion. */
   callExpects: number;
+  /** The subset that checks arguments (`toHaveBeenCalledWith`, `...ExactlyOnceWith`). */
+  callExpectsWith: number;
   /** Every `vi.*` / `jest.*` mocking call. */
   mocks: number;
   /** `vi.mock` / `jest.mock` module replacements only. */
   moduleMocks: number;
-  /** Assertions over source text (imports, exports, CSS, markup). */
+  /** Assertions over repo source text (imports, exports, CSS, markup). */
   sourceTextAsserts: number;
   /** Assertions made after reading source-like repo files. */
   repoTextAsserts: number;
   /** Assertions against a literal value. */
   literalExpects: number;
-  /** The subject looks like data (config, JSON, fewer than three functions). */
+  /** The subject looks like data (config path, or a source with no real functions). */
   dataSubject: boolean;
   fixtureImports: number;
   /** Multi-line `toEqual({` / `toEqual([` literal expectations. */
   largeLiteralExpects: number;
+  /** Lines occupied by those multi-line literals. */
+  literalLines: number;
+  snapshotAsserts: number;
+  inlineSnapshots: number;
   digestPins: number;
   countPins: number;
   deletedFileAsserts: number;
   gatedSuites: number;
   gitShellouts: number;
   pythonShellouts: number;
+  /** Real-clock waits (`setTimeout` promises, `sleep(...)`) without fake timers. */
+  realWaits: number;
+  /** Home-directory or absolute machine paths. */
+  machinePaths: number;
   skipped: number;
+  /** `.only` left in the file. */
+  focused: number;
+  /** Another test file whose whitespace-stripped content is identical. */
+  duplicateOf: string | null;
   testCommits: number;
   sourceCommits: number;
   coChangeCommits: number;
@@ -41,6 +56,7 @@ export type Signals = {
 };
 
 export type Verdict =
+  | 'delete-duplicate'
   | 'delete-or-rewrite'
   | 'move-to-integration'
   | 'refactor-source'
