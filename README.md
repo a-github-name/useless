@@ -9,9 +9,10 @@ real bug in the unit could make it fail. `useless` turns that into a 0–100
 score per file, explains every point, and suggests what kind of human read each
 high scorer deserves.
 
-It works on any git checkout with Vitest, Jest, node:test, or Playwright
-tests. No config, no dependencies, no AST: a handful of regexes over test text
-plus `git log`.
+It works on any git checkout with Vitest, Jest, node:test, mocha with chai or
+assert, ava, tap, or Playwright tests, and finds them under `*.test.*`,
+`*.spec.*`, `__tests__/`, `test/` and `tests/`. No config, no dependencies, no
+AST: a handful of regexes over test text plus `git log`.
 
 ```sh
 npx useless-tests                      # markdown table of the 40 worst files
@@ -128,6 +129,42 @@ noticing that a route test only passes because a non-injected helper swallows
 an error, or that a dispatch table in the source is being transcribed row by
 row. Tautology alone correlates at 0.65 with the reviewers; it is the signal
 that matters most, which is why it carries a third of the weight.
+
+#### Public corpus
+
+To check the rules against code nobody on this team wrote, the scorer was then
+run over 14 public repos: zod, hono, trpc, axios, socket.io, react-hook-form,
+date-fns, excalidraw, express, fastify, SvelteKit, immer, got, and mermaid.
+That is 2,114 test files across Vitest, Jest, mocha, node:test, ava, tap and
+Playwright, in five assertion dialects.
+
+| Measure | Value |
+|---|---:|
+| Files | 2,114 |
+| Median score / p90 / p99 | 4.1 / 11.6 / 22 |
+| Flagged (anything but keep) | 48 (2.3%) |
+| `delete-or-rewrite` | 4, all docs-conformance tests that grep repo markdown |
+| `delete-duplicate` | 14: fastify's webpack/esbuild bundler tests, axios esm/cjs smoke pairs, zod v3/v4 pairs |
+
+Nothing in a well-known suite scores as tautology except the tests that really
+do assert on repo text. The corpus caught six blind spots the first 27 repos
+could not, because those repos never did these things:
+
+- Generator, bundler and prerender tests that build output and read it back
+  (SvelteKit's `builder.spec.js`, `svelte-package`, tRPC's OpenAPI CLI).
+- Transform tests that read an `Input.svelte` fixture beside the test.
+- A `FIXTURE_PATH` constant, or an `import '../helpers/util.ts'` specifier,
+  satisfying the "names a source file" check.
+- Platform-conditional `describe.skipIf(process.platform ...)` suites, which
+  are normal in libraries and are not the same as a suite gated on a
+  developer's home directory.
+- Re-export barrels read as data modules.
+- `Deno.test` and `test.serial` not counted as tests.
+
+Parallel copies by design, such as the same smoke test kept in both esm and cjs
+form, still show up as duplicates. The reason names the partner file, so the
+reader sees the esm/cjs pairing immediately; the scorer does not try to guess
+intent.
 
 Things that were wrong in the first cut and are now handled:
 
