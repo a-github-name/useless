@@ -87,6 +87,13 @@ describe('analyzeTest', () => {
       "for (const f of files) expect(read(f)).not.toMatch(/from '\\.\\.\\/legacy'/);",
     ].join('\n');
     expect(analyze(listing).repoTextAsserts).toBe(1);
+    const variable = [
+      "const design = await readFile(designPath, 'utf8');",
+      "const page = await readFile('src/routes/+page.svelte', 'utf8');",
+      "expect(design).toContain('All form controls have labels');",
+      'expect(page).toContain(\'label="Search"\');',
+    ].join('\n');
+    expect(analyze(`${variable}\n// see DESIGN.md`).repoTextAsserts).toBe(2);
     const tmp = [
       "const dir = mkdtempSync('x');",
       "writeFileSync(join(dir, 'out.ts'), 'export {}');",

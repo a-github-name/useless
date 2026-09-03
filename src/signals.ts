@@ -70,10 +70,10 @@ export function analyzeTest(input: AnalyzeInput): Signals {
   // on a fake, or reading a JSON/YAML fixture, is not that.
   const readsRepoFiles =
     !/\b(mkdtemp|tmpdir|mkdtempSync)\b/.test(text) &&
-    /\b(readFileSync|readdirSync|readFile|readdir)\s*\(\s*(join|resolve|path\.|fileURLToPath|new URL|process\.cwd|__dirname|import\.meta|['"`])/.test(
+    /\b(readFileSync|readdirSync|readFile|readdir)\s*\(\s*(join|resolve|path\.|fileURLToPath|new URL|process\.cwd|__dirname|import\.meta|['"`]|[A-Za-z_$][\w$.]*\s*[,)])/.test(
       text,
     ) &&
-    /['"`][^'"`\n]*\.(tsx?|mjs|cjs|css|html|md)['"`]/.test(text);
+    /['"`][^'"`\n]*\.(tsx?|mjs|cjs|css|html|md|svelte|vue|astro)['"`]/.test(text);
 
   const functionCount = sourceText === null ? null : countFunctions(sourceText);
   const sourceLines = sourceText === null ? null : sourceText.split('\n').length;

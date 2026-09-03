@@ -37,18 +37,23 @@ burden 15, cost 12, mirror 10, lockstep 10, environment 8, skipped 5). Median is
 usually under 12, p90 in the low 20s. Anything over 25 deserves a read, and the
 verdict column says which kind:
 
+- `delete-duplicate`: byte-identical (modulo whitespace) to another test file.
 - `delete-or-rewrite`: the test cannot fail on a real bug (greps source, asserts
-  a mock was called, depends on git history, gated on a developer's machine).
+  a bare "mock was called", depends on git history, gated on a developer's
+  machine).
 - `move-to-integration`: shells out to python/uv; keep it, not in the unit suite.
 - `refactor-source`: the test is the bill for a >1,500-line module. Fix the
   module, not the test.
-- `rewrite-as-contract`: transcribes a fixture (large literals, digest pins,
-  size pins, lockstep edits). State the invariant instead.
-- `review`: high score or ten-plus module mocks; reasons say why.
+- `rewrite-as-contract`: transcribes a fixture (a third of the file is literal
+  expectation, snapshots, digest pins, lockstep edits). State the invariant.
+- `review`: high score, ten-plus module mocks, or a committed `.only`.
+
+`toHaveBeenCalledWith(...)` on an injected fake is discounted: it is often the
+contract of an outbound boundary. Bare `toHaveBeenCalled()` is not.
 
 Known false positives: hand-rolled `vi.fn()` fakes, installer tests that shim
-`git`, tiny pure modules read as data subjects, and test-first features that look
-like lockstep.
+`git`, fixture strings that contain the smell, and test-first features that
+look like lockstep.
 
 ## 3. Close-read the outliers
 

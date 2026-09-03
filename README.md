@@ -9,8 +9,9 @@ real bug in the unit could make it fail. `useless` turns that into a 0–100
 score per file, explains every point, and suggests what kind of human read each
 high scorer deserves.
 
-It works on any git checkout with Vitest, Jest, or Playwright tests. No config,
-no dependencies, no AST: a handful of regexes over test text plus `git log`.
+It works on any git checkout with Vitest, Jest, node:test, or Playwright
+tests. No config, no dependencies, no AST: a handful of regexes over test text
+plus `git log`.
 
 ```sh
 npx useless-tests                      # markdown table of the 40 worst files
@@ -68,24 +69,25 @@ Each signal is normalised to [0, 1] and weighted. Weights sum to 100.
 
 | Signal | Weight | What it measures |
 |---|---:|---|
-| Tautology | 25 | source-text asserts, repo-file greps, git shell-outs, "mock was called" share of expects |
-| Weak assertions | 15 | `toBeTruthy`, `toBeDefined`, `toHaveBeenCalled()`, `toBeInTheDocument` share of expects |
+| Tautology | 25 | source-text asserts, repo-file greps, git shell-outs, "mock was called" share of expects. A bare `toHaveBeenCalled()` counts in full; `toHaveBeenCalledWith(...)` counts half, and less again when the file has no module mocks, because then the fake was injected and the call is the boundary under test |
+| Weak assertions | 15 | `toBeTruthy`, `toBeDefined`, `toHaveBeenCalled()`, `toBeInTheDocument`, `assert.ok` share of expects |
 | Mock burden | 15 | module mocks (`vi.mock`/`jest.mock`, heavy) and fn stubs per test (light) |
-| Cost | 12 | lines per test, plus runtime when a JSON report is supplied |
-| Mirror | 10 | multi-line literal expectations, pinned digests, pinned sizes, deleted-file asserts, literal share on data subjects |
+| Cost | 12 | lines per test, runtime when a JSON report is supplied; saturated for a duplicate file |
+| Mirror | 10 | share of the file that is multi-line literal expectation, snapshots, pinned digests, pinned sizes, deleted-file asserts, literal share on data subjects |
 | Lockstep | 10 | share of source commits that also edited the test (needs ≥5 source commits) |
-| Environment | 8 | shells out to python/uv |
-| Skipped/gated | 5 | `skip`, `todo`, `fixme`, `runIf`/`skipIf` per test |
+| Environment | 8 | spawns python/uv, real-clock waits without fake timers, unmocked reads of the home directory |
+| Skipped/gated | 5 | `skip`, `todo`, `fixme`, `runIf`/`skipIf`, and `.only` left in |
 
 ### Verdict hints
 
 | Verdict | Trigger | What to do |
 |---|---|---|
+| `delete-duplicate` | whitespace-stripped content identical to another test file | Delete the copy, or make it a shared test |
 | `delete-or-rewrite` | git shell-outs, tautology > 0.6, ≥3 digest pins, environment-gated suite, ≥5 asserts over repo source text | Delete, or replace with a lint rule / a behavioural test |
-| `move-to-integration` | shells out to python/uv | Keep it, but out of the unit suite |
+| `move-to-integration` | spawns python/uv | Keep it, but out of the unit suite |
 | `refactor-source` | source > 1,500 lines and (mock burden > 0.5 or weak > 0.5) | The test is the bill for the module. Split the module. |
-| `rewrite-as-contract` | many large literals with a high mirror score; literal-only asserts on a data module; lockstep on a source with ≥10 commits | State the invariant instead of transcribing the output |
-| `review` | score ≥ 35, or ≥10 module mocks | Worth a human read; the reasons say why |
+| `rewrite-as-contract` | ≥30% of the file is literal expectation across ≥3 blocks; ≥3 file snapshots; literal-only asserts on a data module; lockstep on a source with ≥10 commits | State the invariant instead of transcribing the output |
+| `review` | score ≥ 35, ≥10 module mocks, or a committed `.only` | Worth a human read; the reasons say why |
 | `keep` | everything else | |
 
 ### Known false positives
@@ -94,14 +96,31 @@ Each signal is normalised to [0, 1] and weighted. Weights sum to 100.
   is low for this reason, but a fixture-heavy test can still score in the 20s.
 - Installer or scaffolding tests that shim `git` through a fake binary trip the
   git shell-out rule. Read them before deleting.
-- Small pure modules (under three functions) are treated as data subjects, so a
-  one-liner utility with a literal assertion reads as "transcription".
+- A test that reads a JSON fixture and also mentions a `.ts` filename in a
+  string reads as grepping the repo.
 - The lockstep signal cannot tell "restates the implementation" from "the
   feature was built test-first in the same commits". It only fires once the
   source has enough history to make coincidence unlikely.
 - Fixture strings that *contain* a smell read as the smell. The scorer cannot
   tell `expect(src).toContain('export')` from a string literal holding that
-  text. Its own `src/signals.test.ts` scores 29 for exactly this reason.
+  text. Its own `src/signals.test.ts` scores high for exactly this reason.
+
+### Calibration
+
+The rules above were tuned by running the scorer over 27 repos (about 1,500
+test files, 300k lines: SvelteKit apps, Cloudflare Workers, CLIs, a Preact
+globe renderer, node:test suites) and close-reading every file that moved.
+Things that turned out to be wrong in the first cut, and are now handled:
+
+- A 28-file node:test suite scored zero because only `expect(` was counted.
+- A fixture filename ending in `.py` counted as spawning python.
+- `expect(body).toContain('</loc>')` on rendered XML counted as asserting on
+  source text.
+- A fake object with a `readFile: vi.fn()` key counted as reading the repo.
+- A one-function utility module counted as a "data module".
+- Counting large literals instead of measuring them flagged every test that
+  asserted a full result object; measuring lines cut those verdicts by 80%.
+- `/Users/alice/...` in a fixture counted as depending on the machine.
 
 ## Library
 
