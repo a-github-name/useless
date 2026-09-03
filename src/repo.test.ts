@@ -8,9 +8,11 @@ import {
   buildChurnIndex,
   churnFor,
   findDuplicates,
+  findSharedBlocks,
   findSimilar,
   listTestFiles,
   parseTimings,
+  resolveModuleText,
   siblingSource,
 } from './repo.js';
 
@@ -159,6 +161,49 @@ describe('findSimilar', () => {
         { file: 'u.test.ts', text: tiny },
       ]).size,
     ).toBe(0);
+  });
+});
+
+describe('resolveModuleText', () => {
+  it('follows a re-export barrel to the real modules', () => {
+    const root = mkdtempSync(join(tmpdir(), 'useless-barrel-'));
+    mkdirSync(join(root, 'src/ops'), { recursive: true });
+    writeFileSync(
+      join(root, 'src/ops.ts'),
+      "// Barrel\nexport * from './ops/items';\nexport {\n  board,\n  type Board,\n} from './ops/board';\n",
+    );
+    writeFileSync(join(root, 'src/ops/items.ts'), 'export function items() {\n  return 1;\n}\n');
+    writeFileSync(join(root, 'src/ops/board.ts'), 'export const board = () => 2;\n');
+    const r = resolveModuleText(root, 'src/ops.ts');
+    expect(r.files).toEqual(['src/ops/items.ts', 'src/ops/board.ts']);
+    expect(r.text).toContain('function items');
+    expect(r.text).toContain('board = ()');
+    const plain = resolveModuleText(root, 'src/ops/items.ts');
+    expect(plain.files).toEqual(['src/ops/items.ts']);
+  });
+});
+
+describe('findSharedBlocks', () => {
+  it('finds a setup block repeated across three files and ignores pairs', () => {
+    const harness = Array.from(
+      { length: 12 },
+      (_, i) => `const RESET_STATEMENT_${i} = 'DROP TABLE IF EXISTS table_${i}';`,
+    );
+    const mk = (n: number) =>
+      [...harness, `it('case ${n}', () => { expect(run(${n})).toBe(${n}); });`].join('\n');
+    const shared = findSharedBlocks([
+      { file: 'a.test.ts', text: mk(1) },
+      { file: 'b.test.ts', text: mk(2) },
+      { file: 'c.test.ts', text: mk(3) },
+      { file: 'd.test.ts', text: "it('alone', () => { expect(1).toBe(1); });" },
+    ]);
+    expect(shared.get('a.test.ts')).toEqual({ lines: 12, files: 3 });
+    expect(shared.has('d.test.ts')).toBe(false);
+    const pair = findSharedBlocks([
+      { file: 'a.test.ts', text: mk(1) },
+      { file: 'b.test.ts', text: mk(2) },
+    ]);
+    expect(pair.size).toBe(0);
   });
 });
 

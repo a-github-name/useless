@@ -1,9 +1,11 @@
 export {
   collectRepo,
   findDuplicates,
+  findSharedBlocks,
   findSimilar,
   listTestFiles,
   parseTimings,
+  resolveModuleText,
   siblingSource,
 } from './repo.js';
 export type { CollectOptions } from './repo.js';

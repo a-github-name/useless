@@ -63,6 +63,61 @@ export function siblingSource(root: string, testFile: string): string | null {
   return null;
 }
 
+const REEXPORT_RE = /^\s*export\s+(?:\*|\{[^}]*\})\s+from\s+['"](\.[^'"]+)['"]/gm;
+const MODULE_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+
+function resolveImport(root: string, from: string, spec: string): string | null {
+  const base = join(dirname(from), spec);
+  const candidates = [
+    base,
+    ...MODULE_EXTS.map((e) => base + e),
+    ...MODULE_EXTS.map((e) => join(base, `index${e}`)),
+  ];
+  for (const c of candidates)
+    if (existsSync(join(root, c)) && !c.endsWith('/')) {
+      try {
+        if (readFileSync(join(root, c), 'utf8') !== undefined) return c;
+      } catch {
+        /* directory */
+      }
+    }
+  return null;
+}
+
+/**
+ * Read a source module. When it is a re-export barrel (`export * from './x'`
+ * and little else), follow the re-exports and return the concatenated text of
+ * the real modules, so a test that targets the barrel is measured against the
+ * code it actually exercises.
+ */
+export function resolveModuleText(
+  root: string,
+  source: string,
+  seen = new Set<string>(),
+  depth = 0,
+): { text: string; files: string[] } {
+  if (seen.has(source)) return { text: '', files: [] };
+  seen.add(source);
+  const text = readFileSync(join(root, source), 'utf8');
+  const targets = [...text.matchAll(REEXPORT_RE)].map((m) => m[1] ?? '');
+  const substantive = text
+    .replace(REEXPORT_RE, '')
+    .split('\n')
+    .filter((l) => l.trim() && !/^\s*(;|\/\/|\*|\/\*|import\b)/.test(l));
+  const isBarrel = targets.length >= 1 && substantive.length <= 5;
+  if (!isBarrel || depth >= 3) return { text, files: [source] };
+  const texts: string[] = [];
+  const files: string[] = [];
+  for (const spec of targets) {
+    const resolved = resolveImport(root, source, spec);
+    if (!resolved) continue;
+    const inner = resolveModuleText(root, resolved, seen, depth + 1);
+    texts.push(inner.text);
+    files.push(...inner.files);
+  }
+  return files.length ? { text: texts.join('\n'), files } : { text, files: [source] };
+}
+
 /** path -> set of commit hashes that touched it. */
 export type ChurnIndex = Map<string, Set<string>>;
 
@@ -213,6 +268,60 @@ export function findSimilar(
   return result;
 }
 
+const WINDOW = 6;
+
+function harnessLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((raw) => raw.replace(/\s+/g, ' ').trim())
+    .filter((line) => line.length >= MIN_LINE && !/^(import |\/\/|\*|\/\*|}|\)|];?$)/.test(line));
+}
+
+/**
+ * Blocks of `WINDOW` consecutive normalised lines that appear in at least
+ * `minFiles` test files: the copy-pasted reset harness, fixture builder, or
+ * mock wall. Returns, per file, how many of its lines sit in such a block and
+ * how many files share its most-repeated block.
+ */
+export function findSharedBlocks(
+  files: Array<{ file: string; text: string }>,
+  minFiles = 3,
+): Map<string, { lines: number; files: number }> {
+  const owners = new Map<string, Set<string>>();
+  const perFile = files.map(({ file, text }) => {
+    const lines = harnessLines(text);
+    const hashes: string[] = [];
+    for (let i = 0; i + WINDOW <= lines.length; i += 1) {
+      const h = createHash('sha1')
+        .update(lines.slice(i, i + WINDOW).join('\n'))
+        .digest('hex');
+      hashes.push(h);
+      let set = owners.get(h);
+      if (!set) {
+        set = new Set();
+        owners.set(h, set);
+      }
+      set.add(file);
+    }
+    return { file, count: lines.length, hashes };
+  });
+  const result = new Map<string, { lines: number; files: number }>();
+  for (const { file, count, hashes } of perFile) {
+    const covered = new Uint8Array(count);
+    let widest = 0;
+    hashes.forEach((h, i) => {
+      const n = owners.get(h)?.size ?? 0;
+      if (n >= minFiles) {
+        covered.fill(1, i, i + WINDOW);
+        if (n > widest) widest = n;
+      }
+    });
+    const lines = covered.reduce((a, b) => a + b, 0);
+    if (lines > 0) result.set(file, { lines, files: widest });
+  }
+  return result;
+}
+
 /** Read every test file in the repo and extract its signals. */
 export function collectRepo(options: CollectOptions): Signals[] {
   const root = resolve(options.root);
@@ -224,13 +333,17 @@ export function collectRepo(options: CollectOptions): Signals[] {
   }));
   const duplicates = findDuplicates(files);
   const similar = findSimilar(files);
+  const shared = findSharedBlocks(files);
   const signals = files.map(({ file, text }) => {
     const source = siblingSource(root, file);
+    const resolved = source ? resolveModuleText(root, source) : null;
     return analyzeTest({
       file,
       text,
       source,
-      sourceText: source ? readFileSync(join(root, source), 'utf8') : null,
+      sourceText: resolved?.text ?? null,
+      sourceFiles: resolved?.files.length ?? null,
+      sharedHarness: shared.get(file) ?? null,
       churn: churnFor(churn, file, source),
       timing: timings.get(file) ?? null,
       duplicateOf: duplicates.get(file) ?? null,

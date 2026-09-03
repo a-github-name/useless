@@ -5,6 +5,8 @@ export type Signals = {
   source: string | null;
   lines: number;
   sourceLines: number | null;
+  /** Files behind the sibling source when it is a re-export barrel (1 otherwise). */
+  sourceFiles: number | null;
   tests: number;
   /** `expect(...)` and `assert.*(...)` calls. */
   expects: number;
@@ -56,6 +58,10 @@ export type Signals = {
   duplicateOf: string | null;
   /** Another test file sharing most of this file's distinct lines, and the share. */
   similarTo: { file: string; share: number } | null;
+  /** Lines of this file that belong to a block repeated in three or more test files. */
+  sharedHarnessLines: number;
+  /** How many test files share this file's most-repeated block. */
+  sharedHarnessFiles: number;
   testCommits: number;
   sourceCommits: number;
   coChangeCommits: number;

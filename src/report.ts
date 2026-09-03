@@ -12,6 +12,8 @@ export type Summary = {
   verdicts: Record<Verdict, number>;
   median: number;
   p90: number;
+  sharedHarnessLines: number;
+  sharedHarnessFiles: number;
 };
 
 export function summarize(rows: Scored[]): Summary {
@@ -27,6 +29,8 @@ export function summarize(rows: Scored[]): Summary {
     verdicts,
     median: 0,
     p90: 0,
+    sharedHarnessLines: 0,
+    sharedHarnessFiles: 0,
   };
   for (const row of rows) {
     summary.lines += row.lines;
@@ -36,6 +40,10 @@ export function summarize(rows: Scored[]): Summary {
     summary.mocks += row.mocks;
     summary.moduleMocks += row.moduleMocks;
     verdicts[row.verdict] += 1;
+    if (row.sharedHarnessFiles >= 3 && row.sharedHarnessLines >= 40) {
+      summary.sharedHarnessLines += row.sharedHarnessLines;
+      summary.sharedHarnessFiles += 1;
+    }
   }
   const scores = rows.map((r) => r.score).sort((a, b) => a - b);
   const at = (q: number): number =>
@@ -49,7 +57,10 @@ export function summaryLines(summary: Summary): string[] {
   const weakPct = Math.round((summary.weakExpects / Math.max(1, summary.expects)) * 100);
   return [
     `${summary.files} test files · ${summary.lines} lines · ${summary.tests} tests · ${summary.expects} expects (${weakPct}% weak) · ${summary.mocks} mocks (${summary.moduleMocks} module mocks)`,
-    `score median ${summary.median} · p90 ${summary.p90}`,
+    `score median ${summary.median} · p90 ${summary.p90}` +
+      (summary.sharedHarnessFiles
+        ? ` · ${summary.sharedHarnessLines} lines of setup duplicated across ${summary.sharedHarnessFiles} files`
+        : ''),
     VERDICT_ORDER.filter((v) => summary.verdicts[v] > 0)
       .map((v) => `${v}: ${summary.verdicts[v]}`)
       .join(' · '),

@@ -60,6 +60,8 @@ export type AnalyzeInput = {
   timing: Timing | null;
   duplicateOf?: string | null;
   similarTo?: { file: string; share: number } | null;
+  sourceFiles?: number | null;
+  sharedHarness?: { lines: number; files: number } | null;
 };
 
 /**
@@ -126,6 +128,7 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     source,
     lines: lines.length,
     sourceLines,
+    sourceFiles: sourceText === null ? null : (input.sourceFiles ?? 1),
     tests: count(
       text,
       /^\s*(Deno\.test|it|test)(\.(each|skip|only|todo|concurrent|serial|skipIf|runIf|fixme|fails))?(\([^)]*\))?\s*\(/gm,
@@ -237,6 +240,8 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     focused: count(text, /\b(it|test|describe)\.only\(/g),
     duplicateOf: input.duplicateOf ?? null,
     similarTo: input.similarTo ?? null,
+    sharedHarnessLines: input.sharedHarness?.lines ?? 0,
+    sharedHarnessFiles: input.sharedHarness?.files ?? 0,
     testCommits: churn.testCommits,
     sourceCommits: churn.sourceCommits,
     coChangeCommits: churn.coChangeCommits,

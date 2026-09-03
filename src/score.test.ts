@@ -7,6 +7,7 @@ const base: Signals = {
   source: 'src/thing.ts',
   lines: 120,
   sourceLines: 200,
+  sourceFiles: 1,
   tests: 6,
   expects: 12,
   weakExpects: 1,
@@ -38,6 +39,8 @@ const base: Signals = {
   focused: 0,
   duplicateOf: null,
   similarTo: null,
+  sharedHarnessLines: 0,
+  sharedHarnessFiles: 0,
   testCommits: 3,
   sourceCommits: 8,
   coChangeCommits: 2,
@@ -157,6 +160,20 @@ describe('score', () => {
   it('a huge test on a huge source is refactor-source even without mocks', () => {
     expect(score(withSignals({ sourceLines: 9000, lines: 4600, tests: 70 })).verdict).toBe(
       'refactor-source',
+    );
+    const barrel = score(
+      withSignals({ sourceLines: 4098, sourceFiles: 9, lines: 2266, tests: 21 }),
+    );
+    expect(barrel.verdict).toBe('refactor-source');
+    expect(barrel.reasons).toContain('tests a barrel over 9 files (4098 lines) as one unit');
+  });
+
+  it('duplicated setup raises cost and is named', () => {
+    const s = score(withSignals({ sharedHarnessLines: 96, sharedHarnessFiles: 19 }));
+    expect(s.reasons).toContain('96 lines of setup duplicated across 19 files');
+    expect(s.components.cost).toBeGreaterThan(score(base).components.cost);
+    expect(score(withSignals({ sharedHarnessLines: 96, sharedHarnessFiles: 2 })).reasons).toEqual(
+      [],
     );
   });
 

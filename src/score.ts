@@ -86,13 +86,20 @@ export function score(signals: Signals): Scored {
   const linesPerTest = signals.lines / tests;
   const durationMs = signals.durationMs ?? 0;
   const shared = signals.similarTo?.share ?? 0;
+  const harness = signals.sharedHarnessFiles >= 3 ? clamp(signals.sharedHarnessLines / 200) : 0;
   const cost = signals.duplicateOf
     ? 1
     : clamp(
         clamp(linesPerTest / 120) * 0.6 +
           clamp(durationMs / 20_000) * 0.4 +
-          (shared >= 0.5 ? shared * 0.5 : 0),
+          (shared >= 0.5 ? shared * 0.5 : 0) +
+          harness * 0.3,
       );
+  if (signals.sharedHarnessFiles >= 3 && signals.sharedHarnessLines >= 40)
+    reasons.push(
+      `${signals.sharedHarnessLines} lines of setup duplicated across ${signals.sharedHarnessFiles} files`,
+    );
+
   if (signals.duplicateOf) reasons.push(`identical to ${signals.duplicateOf}`);
   else if (signals.similarTo && shared >= 0.5)
     reasons.push(`${pct(shared)} of its lines also appear in ${signals.similarTo.file}`);
@@ -181,9 +188,13 @@ export function score(signals: Signals): Scored {
     signals.sourceLines !== null &&
     signals.sourceLines > 1500 &&
     (mockBurden > 0.5 || weak > 0.5 || signals.lines > 1000)
-  )
+  ) {
     verdict = 'refactor-source';
-  else if (
+    if ((signals.sourceFiles ?? 1) > 1)
+      reasons.push(
+        `tests a barrel over ${signals.sourceFiles} files (${signals.sourceLines} lines) as one unit`,
+      );
+  } else if (
     (literalLineShare >= 0.5 && signals.largeLiteralExpects >= 5) ||
     (signals.snapshotAsserts >= 3 && signals.snapshotAsserts >= tests / 2) ||
     signals.digestPins >= 5 ||

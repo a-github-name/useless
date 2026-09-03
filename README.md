@@ -74,7 +74,7 @@ Each signal is normalised to [0, 1] and weighted. Weights sum to 100.
 | Tautology | 35 | source-text asserts, repo-file greps, SQL text pins, git shell-outs, "mock was called" share of expects. A bare `toHaveBeenCalled()` counts in full; `toHaveBeenCalledTimes`, `not.toHaveBeenCalled()` and `toHaveBeenCalledWith(...)` count half, and less again when the file has no module mocks, because then the fake was injected and the call is the boundary under test |
 | Weak assertions | 12 | `toBeTruthy`, `toBeDefined`, `toBeInTheDocument`, bare `toHaveBeenCalled()`, `toBeGreaterThan(0)`, `not.toBeNull()`, `assert.ok` share of expects |
 | Mock burden | 10 | module mocks (`vi.mock`/`jest.mock`, heavy) and fn stubs per test (light) |
-| Cost | 15 | lines per test, runtime when a JSON report is supplied, share of lines copied from another test file; saturated for an exact duplicate |
+| Cost | 15 | lines per test, runtime when a JSON report is supplied, share of lines copied from another test file, lines of setup that a block repeated in three or more files accounts for; saturated for an exact duplicate |
 | Mirror | 8 | pinned digests, pinned sizes, snapshots, deleted-file asserts, literal share on data subjects, and only the *excess* of multi-line literal expectation over 40% of the file |
 | Lockstep | 8 | share of source commits that also edited the test (needs ≥5 source commits) |
 | Environment | 7 | spawns python/uv, real-clock waits without fake timers, unmocked reads of the home directory |
@@ -87,7 +87,7 @@ Each signal is normalised to [0, 1] and weighted. Weights sum to 100.
 | `delete-duplicate` | identical to another test file, or ≥90% of its distinct lines appear in one | Delete the copy, or make it a shared test |
 | `delete-or-rewrite` | git shell-outs, tautology > 0.6, environment-gated suite, ≥5 asserts over repo source text | Delete, or replace with a lint rule / a behavioural test |
 | `move-to-integration` | spawns python/uv | Keep it, but out of the unit suite |
-| `refactor-source` | source > 1,500 lines and (mock burden > 0.5, weak > 0.5, or the test itself > 1,000 lines) | The test is the bill for the module. Split the module. |
+| `refactor-source` | source > 1,500 lines and (mock burden > 0.5, weak > 0.5, or the test itself > 1,000 lines). A sibling that is a re-export barrel is followed to the modules behind it, so a test that targets the barrel is measured against the code it exercises | The test is the bill for the module. Split the module, or split the test along the module's existing seams. |
 | `rewrite-as-contract` | ≥50% of the file is literal expectation across ≥5 blocks; ≥3 file snapshots; ≥5 digest pins; literal-only asserts on a data module; lockstep on a source with ≥10 commits | State the invariant instead of transcribing the output |
 | `review` | score ≥ 35, ≥10 module mocks, a committed `.only`, or ≥70% of its lines shared with another test file | Worth a human read; the reasons say why |
 | `keep` | everything else | |
@@ -160,6 +160,12 @@ could not, because those repos never did these things:
   developer's home directory.
 - Re-export barrels read as data modules.
 - `Deno.test` and `test.serial` not counted as tests.
+
+The summary line also reports duplicated setup: lines that belong to a block
+of six or more normalised lines repeated in three or more test files. On a
+SvelteKit monorepo that was 1,337 lines across 25 files, with one reset harness
+pasted into 44 of them; no single file looked expensive, which is why the
+per-file similarity signal alone did not surface it.
 
 Parallel copies by design, such as the same smoke test kept in both esm and cjs
 form, still show up as duplicates. The reason names the partner file, so the
@@ -243,6 +249,12 @@ Things that were wrong in the first cut and are now handled:
 - `/Users/alice/...` in a fixture counted as depending on the machine.
 - Copy-pasted test files across packages went unnoticed; seven exact or
   near-exact copies turned up in three repos.
+- A test next to a 3-line `export * from` barrel was measured against the
+  barrel, so the refactor-source rule never fired on a 2,266-line test of a
+  4,123-line module. Barrels are now followed.
+- A reset harness pasted into 44 files was invisible because each copy was a
+  third of its file, below the similarity threshold. Repeated blocks are now
+  counted across the whole suite.
 
 ## Library
 

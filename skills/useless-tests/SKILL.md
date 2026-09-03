@@ -27,8 +27,11 @@ npx useless-tests --timings .vitest.json --top 40 --json useless.json
 If it is not installed, `pnpm dlx useless-tests` works, or clone
 `~/projects/useless` and run `pnpm dev --root <repo>`.
 
-Read the three summary lines and the table. Keep `useless.json`; it holds every
-raw signal and normalised component for every file.
+Read the three summary lines and the table. The second line reports duplicated
+setup ("N lines of setup duplicated across M files") when a block is pasted
+into three or more files; that is a suite-level finding, not a per-file one,
+and belongs in the practices section. Keep `useless.json`; it holds every raw
+signal and normalised component for every file.
 
 ## 2. Understand what the score means
 
@@ -45,7 +48,9 @@ read, and the verdict column says which kind:
   machine).
 - `move-to-integration`: shells out to python/uv; keep it, not in the unit suite.
 - `refactor-source`: the test is the bill for a >1,500-line module. Fix the
-  module, not the test.
+  module, not the test. When the reason says "tests a barrel over N files",
+  the module has already been split and the test has not; split the test along
+  the same seams.
 - `rewrite-as-contract`: transcribes a fixture (a third of the file is literal
   expectation, snapshots, digest pins, lockstep edits). State the invariant.
 - `review`: high score, ten-plus module mocks, or a committed `.only`.
@@ -84,7 +89,8 @@ note it as a false positive and move on.
 The point is not the list. Look for practice-level patterns:
 
 - Which modules are the largest tests for? They map onto the largest
-  single-export modules. Table them side by side.
+  single-export modules, or onto barrels over modules that were split while
+  their tests were not. Table them side by side with the real module size.
 - Is dependency injection consistent? A test that must `vi.mock` a sibling is a
   module that imports what it should receive.
 - Growth shape: `git log --format=%ad --date=short -- '*.test.*'` bucketed by
