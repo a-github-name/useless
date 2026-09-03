@@ -149,7 +149,8 @@ export function score(signals: Signals): Scored {
   // 8. Skipped, gated, or focused tests are cost with no guaranteed signal.
   const skipped = clamp((signals.skipped + signals.gatedSuites + signals.focused * 2) / tests);
   if (signals.skipped > 0) reasons.push(`${signals.skipped} skipped`);
-  if (signals.gatedSuites > 0) reasons.push('suite gated on local environment');
+  if (signals.machineGates > 0) reasons.push('suite gated on this machine');
+  else if (signals.gatedSuites > 0) reasons.push(`${signals.gatedSuites} conditional suite(s)`);
   if (signals.focused > 0) reasons.push(`.only left in (${signals.focused})`);
 
   const components: Record<SignalName, number> = {
@@ -171,7 +172,7 @@ export function score(signals: Signals): Scored {
   else if (
     signals.gitShellouts > 0 ||
     tautology > 0.6 ||
-    signals.gatedSuites > 0 ||
+    signals.machineGates > 0 ||
     signals.repoTextAsserts >= 5
   )
     verdict = 'delete-or-rewrite';
@@ -184,13 +185,18 @@ export function score(signals: Signals): Scored {
     verdict = 'refactor-source';
   else if (
     (literalLineShare >= 0.5 && signals.largeLiteralExpects >= 5) ||
-    signals.snapshotAsserts >= 3 ||
+    (signals.snapshotAsserts >= 3 && signals.snapshotAsserts >= tests / 2) ||
     signals.digestPins >= 5 ||
     (signals.dataSubject && literalShare > 0.7 && signals.mocks === 0) ||
     (lockstep >= 0.85 && signals.sourceCommits >= 10)
   )
     verdict = 'rewrite-as-contract';
-  else if (total >= 35 || signals.moduleMocks >= 10 || signals.focused > 0 || shared >= 0.7)
+  else if (
+    total >= 35 ||
+    signals.moduleMocks >= 10 ||
+    signals.focused > 0 ||
+    (shared >= 0.7 && signals.lines > 100 && total >= 12)
+  )
     verdict = 'review';
 
   return { ...signals, score: Math.round(total * 10) / 10, components, reasons, verdict };

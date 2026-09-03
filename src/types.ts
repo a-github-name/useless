@@ -41,6 +41,8 @@ export type Signals = {
   countPins: number;
   deletedFileAsserts: number;
   gatedSuites: number;
+  /** Gates that depend on this machine: a path existing, the home directory, a local env var. */
+  machineGates: number;
   gitShellouts: number;
   pythonShellouts: number;
   /** Real-clock waits (`setTimeout` promises, `sleep(...)`) without fake timers. */

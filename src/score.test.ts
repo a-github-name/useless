@@ -29,6 +29,7 @@ const base: Signals = {
   countPins: 0,
   deletedFileAsserts: 0,
   gatedSuites: 0,
+  machineGates: 0,
   gitShellouts: 0,
   pythonShellouts: 0,
   realWaits: 0,
@@ -136,13 +137,21 @@ describe('score', () => {
   it('near-duplicates raise cost and become delete-duplicate at 90% shared lines', () => {
     const near = score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.95 } }));
     expect(near.verdict).toBe('delete-duplicate');
-    const partial = score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 } }));
-    expect(partial.verdict).toBe('review');
-    expect(score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.65 } })).verdict).toBe(
-      'keep',
+    const partial = score(
+      withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 }, lines: 400, weakExpects: 6 }),
     );
+    expect(partial.verdict).toBe('review');
     expect(partial.reasons).toContain('70% of its lines also appear in src/a.test.ts');
     expect(partial.components.cost).toBeGreaterThan(score(base).components.cost);
+    const small = score(
+      withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 }, lines: 60, weakExpects: 6 }),
+    );
+    expect(small.verdict).toBe('keep');
+    const cheap = score(
+      withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.8 }, lines: 200, tests: 20 }),
+    );
+    expect(cheap.score).toBeLessThan(12);
+    expect(cheap.verdict).toBe('keep');
   });
 
   it('a huge test on a huge source is refactor-source even without mocks', () => {
@@ -205,6 +214,8 @@ describe('score', () => {
     expect(fullObjects.verdict).toBe('keep');
     const snapshots = score(withSignals({ snapshotAsserts: 3 }));
     expect(snapshots.verdict).toBe('rewrite-as-contract');
+    const fewSnapshots = score(withSignals({ snapshotAsserts: 3, tests: 20 }));
+    expect(fewSnapshots.verdict).toBe('keep');
   });
 
   it('lockstep needs history before it counts', () => {
@@ -218,8 +229,11 @@ describe('score', () => {
     expect(midHistory.verdict).toBe('keep');
   });
 
-  it('gated suites are delete-or-rewrite; digest pins need five to matter; skips do not', () => {
-    expect(score(withSignals({ gatedSuites: 1 })).verdict).toBe('delete-or-rewrite');
+  it('machine-gated suites are delete-or-rewrite; platform gates and skips are not', () => {
+    expect(score(withSignals({ gatedSuites: 1 })).verdict).toBe('keep');
+    expect(score(withSignals({ gatedSuites: 1, machineGates: 1 })).verdict).toBe(
+      'delete-or-rewrite',
+    );
     expect(score(withSignals({ digestPins: 3 })).verdict).toBe('keep');
     expect(score(withSignals({ digestPins: 5 })).verdict).toBe('rewrite-as-contract');
     expect(score(withSignals({ skipped: 1 })).verdict).toBe('keep');

@@ -74,18 +74,43 @@ export function analyzeTest(input: AnalyzeInput): Signals {
   // argument and names a source-like file somewhere (often via a helper), and
   // nothing suggests the files came from a tmpdir it wrote. `readFile: vi.fn()`
   // on a fake, or reading a JSON/YAML fixture, is not that.
+  // The test builds something and reads the result back: a generator or
+  // bundler test, not a grep over the repo. Needs write/remove calls or a
+  // path string that ends in a build directory.
+  const producesOutput =
+    /\b(writeFile|writeFileSync|mkdir|mkdirSync|rmSync|rimraf|copyFile|copyFileSync|outDir|outputDir)\b/.test(
+      text,
+    ) ||
+    /['"`][^'"`\n]*\/(dist|build|output|generated|\.svelte-kit|\.next|out)(\/|['"`])/.test(text) ||
+    /\$\{(dist|build|output|outDir|outputDir)\}\//.test(text);
+  // Reading from a fixtures/samples/cases directory, an Input.* file, or a
+  // FIXTURE constant is test input, not source.
+  const readsFixtures =
+    /['"`][^'"`\n]*(^|\/)(fixtures?|samples?|__fixtures__|cases|inputs?|snapshots?)\//.test(text) ||
+    /['"`]([^'"`\n]*\/)?([Ii]nput|[Ss]ample|[Ff]ixture)[^'"`\n]*\.\w+['"`]|\.(input|fixture|sample)\.\w+['"`]/.test(
+      text,
+    ) ||
+    /\b(readFileSync|readFile)\s*\(\s*[\w$.]*[Ff][Ii][Xx][Tt][Uu][Rr][Ee]/.test(text);
   const readsRepoFiles =
     !/\b(mkdtemp|tmpdir|mkdtempSync)\b/.test(text) &&
-    /\b(readFileSync|readdirSync|readFile|readdir)\s*\(\s*(join|resolve|path\.|fileURLToPath|new URL|process\.cwd|__dirname|import\.meta|['"`]|[A-Za-z_$][\w$.]*\s*[,)])/.test(
+    !producesOutput &&
+    !readsFixtures &&
+    /(?<![\w$.])(?:(?:fs|fsp|fsPromises|promises)\.)?(readFileSync|readdirSync|readFile|readdir)\s*\(\s*(join|resolve|path\.|fileURLToPath|new URL|process\.cwd|__dirname|import\.meta|['"`]|[A-Za-z_$][\w$.]*\s*[,)])/.test(
       text,
     ) &&
-    /['"`][^'"`\n]*\.(tsx?|mjs|cjs|css|html|md|svelte|vue|astro)['"`]/.test(text);
+    /['"`][^'"`\n]*\.(tsx?|mjs|cjs|css|html|md|svelte|vue|astro)['"`]/.test(
+      text.replace(/^\s*(import\b[^\n]*|export\b[^\n]*\bfrom\b[^\n]*)$/gm, ''),
+    );
 
   const functionCount = sourceText === null ? null : countFunctions(sourceText);
   const sourceLines = sourceText === null ? null : sourceText.split('\n').length;
+  // A barrel of re-exports has no functions but is not data either.
+  const barrel =
+    sourceText !== null && count(sourceText, /^export\s+(\*|\{[^}]*\})\s+from\b/gm) >= 3;
   const dataSubject =
     /\/config\//.test(file) ||
-    (functionCount !== null &&
+    (!barrel &&
+      functionCount !== null &&
       sourceLines !== null &&
       (functionCount === 0 || (functionCount <= 2 && sourceLines > 80)));
 
@@ -103,7 +128,7 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     sourceLines,
     tests: count(
       text,
-      /^\s*(it|test)(\.(each|skip|only|todo|concurrent|skipIf|runIf|fixme|fails))?(\([^)]*\))?\s*\(/gm,
+      /^\s*(Deno\.test|it|test)(\.(each|skip|only|todo|concurrent|serial|skipIf|runIf|fixme|fails))?(\([^)]*\))?\s*\(/gm,
     ),
     expects:
       count(text, /\bexpect(\.soft)?\s*\(/g) +
@@ -134,7 +159,7 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     mocks: count(text, /\b(vi|jest)\.(mock|doMock|fn|spyOn|stubGlobal|stubEnv|hoisted)\b/g),
     moduleMocks: count(text, /\b(vi|jest)\.(mock|doMock)\(/g),
     sourceTextAsserts:
-      count(text, /readFileSync\([^)]*\.(ts|tsx|css|md|toml|mjs|html|yml|yaml)\b/g) +
+      (readsRepoFiles ? count(text, /readFileSync\([^)]*\.(ts|tsx|css|md|toml|mjs|html)\b/g) : 0) +
       (readsRepoFiles
         ? count(
             text,
@@ -146,7 +171,7 @@ export function analyzeTest(input: AnalyzeInput): Signals {
           )
         : 0),
     repoTextAsserts: readsRepoFiles
-      ? count(text, /\.(not\.)?(toContain|toMatch|toEqual|toBe|toBeGreaterThan)\(/g)
+      ? count(text, /\.(not\.)?(toContain|toMatch|toMatchObject|toEqual|toBe|toBeGreaterThan)\(/g)
       : 0,
     literalExpects:
       count(
@@ -187,6 +212,10 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     countPins: count(text, /\.toHaveLength\((\d{2,}|[4-9])\)/g),
     deletedFileAsserts: count(text, /existsSync\([^)]*\)\)\s*\.toBe\(false\)/g),
     gatedSuites: count(text, /\b(describe|it|test)\.(runIf|skipIf)\(/g),
+    machineGates: count(
+      text,
+      /\b(describe|it|test)\.(runIf|skipIf)\([^)\n]*(existsSync|homedir|process\.env\.HOME|\/Users\/|\/home\/|LOCAL_|_LOCAL\b)/g,
+    ),
     gitShellouts: count(
       text,
       /(execFileSync|execSync|spawnSync|execa)\(\s*['"]git['"]|\bgit (log|rev-parse|show|diff|ls-files)\b|origin\/(main|master)/g,

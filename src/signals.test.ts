@@ -29,6 +29,9 @@ describe('analyzeTest', () => {
     expect(s.tests).toBe(5);
     expect(s.skipped).toBe(1);
     expect(s.gatedSuites).toBe(1);
+    expect(s.machineGates).toBe(0);
+    const local = analyze("describe.runIf(existsSync(join(homedir(), 'data')))('x', () => {});");
+    expect(local.machineGates).toBe(1);
   });
 
   it('separates weak presence checks from real assertions', () => {
@@ -287,6 +290,80 @@ describe('analyzeTest', () => {
     expect(analyze(fixture).pythonShellouts).toBe(0);
     expect(analyze("spawnSync('uv', ['run', 'x.py']);").pythonShellouts).toBe(1);
     expect(analyze("command: 'python3',").pythonShellouts).toBe(1);
+  });
+
+  it('a generator test that writes output and reads it back is not a repo grep', () => {
+    const build = [
+      "await build({ outDir: 'test/output' });",
+      "const out = readFileSync('test/output/index.js', 'utf8');",
+      "expect(out).toContain('export function');",
+      'rmSync(dest, { recursive: true });',
+    ].join('\n');
+    const s = analyze(build);
+    expect(s.repoTextAsserts).toBe(0);
+    expect(s.sourceTextAsserts).toBe(0);
+  });
+
+  it('reading fixtures or build output is input, not a repo grep', () => {
+    for (const read of [
+      "readFileSync(join(__dirname, 'fixtures/basic.svelte'), 'utf8')",
+      "await fs.readFile(resolve('Input.svelte'), 'utf-8')",
+      "readFileSync(FIXTURE_PATH, 'utf8')",
+      "fs.readFileSync(`${build}/index.html`, 'utf8')",
+      "readFileSync('.custom-out-dir/output/client/nodes/0.js', 'utf8')",
+    ]) {
+      const s = analyze(
+        [
+          "const build = fileURLToPath(new URL('../build', import.meta.url));",
+          `const input = ${read};`,
+          'const out = transform(input);',
+          "expect(out).toContain('<img');",
+          "expect(out).not.toContain('className');",
+        ].join('\n'),
+      );
+      expect(s.repoTextAsserts, read).toBe(0);
+      expect(s.sourceTextAsserts, read).toBe(0);
+    }
+  });
+
+  it('value matchers count as greps after a repo read too', () => {
+    const s = analyze(
+      [
+        "const src = readFileSync('src/app.ts', 'utf8');",
+        "expect(parse(src).imports).toEqual(['a']);",
+        "expect(src).toContain('export');",
+        "expect(src.includes('any')).toBe(false);",
+      ].join('\n'),
+    );
+    expect(s.repoTextAsserts).toBe(3);
+  });
+
+  it('an import specifier with an extension is not a source-file name', () => {
+    const s = analyze(
+      [
+        "import { render } from '../helpers/util.ts';",
+        "const src = readFileSync('e2e/diagrams/flow.mmd', 'utf8');",
+        "expect(render(src)).toContain('<svg');",
+      ].join('\n'),
+    );
+    expect(s.repoTextAsserts).toBe(0);
+  });
+
+  it('a helper object with a readFile method is not the filesystem', () => {
+    const s = analyze(
+      "const lib = await API.readFile('fixtures/lib.ts');\nexpect(lib).toContain('x');",
+    );
+    expect(s.repoTextAsserts).toBe(0);
+    const fs = analyze(
+      "const src = fs.readFileSync('src/app.ts', 'utf8');\nexpect(src).toContain('x');",
+    );
+    expect(fs.repoTextAsserts).toBe(1);
+  });
+
+  it('a re-export barrel is not a data module, and Deno.test counts as a test', () => {
+    const barrel = "export * from './a';\nexport { b } from './b';\nexport { c } from './c';\n";
+    expect(analyze('', 'src/index.test.ts', barrel).dataSubject).toBe(false);
+    expect(analyze("Deno.test('x', () => {});\ntest.serial('y', () => {});").tests).toBe(2);
   });
 
   it('a fake with a readFile method is not a repo read', () => {
