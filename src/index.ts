@@ -1,4 +1,11 @@
-export { collectRepo, findDuplicates, listTestFiles, parseTimings, siblingSource } from './repo.js';
+export {
+  collectRepo,
+  findDuplicates,
+  findSimilar,
+  listTestFiles,
+  parseTimings,
+  siblingSource,
+} from './repo.js';
 export type { CollectOptions } from './repo.js';
 export { markdownTable, summarize, summaryLines } from './report.js';
 export type { Summary } from './report.js';

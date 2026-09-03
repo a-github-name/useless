@@ -36,14 +36,35 @@ describe('analyzeTest', () => {
       'expect(x).toBeTruthy();',
       'expect(x).toBeDefined();',
       'expect(fn).toHaveBeenCalled();',
+      'expect(fn).not.toHaveBeenCalled();',
+      'expect(fn).toHaveBeenCalledTimes(2);',
+      'expect(fn).toHaveBeenCalledWith(1);',
       "expect(x).toBe('literal');",
       'expect(list).toEqual([1, 2]);',
+      'expect(buf.byteLength).toBeGreaterThan(0);',
+      'expect(out).not.toBeNull();',
+      'expect(a).not.toBe(b);',
+      'expect(total).toBeGreaterThan(40);',
     ].join('\n');
     const s = analyze(text);
-    expect(s.expects).toBe(5);
-    expect(s.weakExpects).toBe(3);
-    expect(s.callExpects).toBe(1);
+    expect(s.expects).toBe(12);
+    expect(s.weakExpects).toBe(5);
+    expect(s.callExpects).toBe(4);
+    expect(s.callExpectsCounted).toBe(2);
+    expect(s.callExpectsWith).toBe(1);
     expect(s.literalExpects).toBe(2);
+  });
+
+  it('counts SQL text pinned through toContain or toMatch', () => {
+    const s = analyze(
+      [
+        "expect(sql).toContain('UPDATE generation_jobs SET');",
+        "expect(sql).toContain('FROM sms_threads');",
+        "expect(sql).toMatch('json_set(metadata');",
+        "expect(out).toContain('hello');",
+      ].join('\n'),
+    );
+    expect(s.sqlTextAsserts).toBe(3);
   });
 
   it('weighs module mocks separately from fn stubs, for vitest and jest', () => {

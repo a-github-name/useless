@@ -12,6 +12,8 @@ const base: Signals = {
   weakExpects: 1,
   callExpects: 0,
   callExpectsWith: 0,
+  callExpectsCounted: 0,
+  sqlTextAsserts: 0,
   mocks: 0,
   moduleMocks: 0,
   sourceTextAsserts: 0,
@@ -34,6 +36,7 @@ const base: Signals = {
   skipped: 0,
   focused: 0,
   duplicateOf: null,
+  similarTo: null,
   testCommits: 3,
   sourceCommits: 8,
   coChangeCommits: 2,
@@ -103,18 +106,48 @@ describe('score', () => {
     expect(half.reasons).toContain('50% of expects are "mock was called"');
   });
 
-  it('argument-checked calls on injected fakes are discounted, bare calls are not', () => {
+  it('argument-checked and counted calls are discounted, bare calls are not', () => {
     const bareInjected = score(withSignals({ callExpects: 12, moduleMocks: 0 }));
     const withInjected = score(
       withSignals({ callExpects: 12, callExpectsWith: 12, moduleMocks: 0 }),
     );
     const withMocked = score(withSignals({ callExpects: 12, callExpectsWith: 12, moduleMocks: 2 }));
+    const counted = score(withSignals({ callExpects: 12, callExpectsCounted: 12, moduleMocks: 0 }));
     expect(bareInjected.components.tautology).toBe(1);
     expect(withMocked.components.tautology).toBeCloseTo(0.5);
     expect(withInjected.components.tautology).toBeCloseTo(0.3);
+    expect(counted.components.tautology).toBeCloseTo(0.35);
     expect(withInjected.verdict).toBe('keep');
     expect(withInjected.reasons).toContain(
       '100% of expects are "mock was called" (with args, injected fakes)',
+    );
+    expect(counted.reasons).toContain(
+      '100% of expects are "mock was called" (counted, injected fakes)',
+    );
+  });
+
+  it('SQL text pins count as tautology', () => {
+    const s = score(withSignals({ sqlTextAsserts: 8 }));
+    expect(s.components.tautology).toBeCloseTo(8 / 12);
+    expect(s.verdict).toBe('delete-or-rewrite');
+    expect(s.reasons).toContain('pins SQL text ×8');
+  });
+
+  it('near-duplicates raise cost and become delete-duplicate at 90% shared lines', () => {
+    const near = score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.95 } }));
+    expect(near.verdict).toBe('delete-duplicate');
+    const partial = score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 } }));
+    expect(partial.verdict).toBe('review');
+    expect(score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.65 } })).verdict).toBe(
+      'keep',
+    );
+    expect(partial.reasons).toContain('70% of its lines also appear in src/a.test.ts');
+    expect(partial.components.cost).toBeGreaterThan(score(base).components.cost);
+  });
+
+  it('a huge test on a huge source is refactor-source even without mocks', () => {
+    expect(score(withSignals({ sourceLines: 9000, lines: 4600, tests: 70 })).verdict).toBe(
+      'refactor-source',
     );
   });
 
@@ -160,11 +193,16 @@ describe('score', () => {
     const literal = score(withSignals({ dataSubject: true, literalExpects: 11 }));
     expect(literal.verdict).toBe('rewrite-as-contract');
     expect(literal.reasons).toContain('92% literal assertions on a data module');
-    const large = score(withSignals({ largeLiteralExpects: 6, literalLines: 60, lines: 120 }));
+    const large = score(withSignals({ largeLiteralExpects: 6, literalLines: 72, lines: 120 }));
     expect(large.verdict).toBe('rewrite-as-contract');
-    expect(large.reasons).toContain('50% of the file is literal expectation (6 blocks)');
-    const fewButBig = score(withSignals({ largeLiteralExpects: 2, literalLines: 60, lines: 120 }));
+    expect(large.reasons).toContain('60% of the file is literal expectation (6 blocks)');
+    const fewButBig = score(withSignals({ largeLiteralExpects: 2, literalLines: 72, lines: 120 }));
     expect(fewButBig.verdict).toBe('keep');
+    const fullObjects = score(
+      withSignals({ largeLiteralExpects: 6, literalLines: 36, lines: 120 }),
+    );
+    expect(fullObjects.components.mirror).toBe(0);
+    expect(fullObjects.verdict).toBe('keep');
     const snapshots = score(withSignals({ snapshotAsserts: 3 }));
     expect(snapshots.verdict).toBe('rewrite-as-contract');
   });
@@ -180,9 +218,10 @@ describe('score', () => {
     expect(midHistory.verdict).toBe('keep');
   });
 
-  it('gated suites and digest pins are delete-or-rewrite; a couple of skips are not', () => {
+  it('gated suites are delete-or-rewrite; digest pins need five to matter; skips do not', () => {
     expect(score(withSignals({ gatedSuites: 1 })).verdict).toBe('delete-or-rewrite');
-    expect(score(withSignals({ digestPins: 3 })).verdict).toBe('delete-or-rewrite');
+    expect(score(withSignals({ digestPins: 3 })).verdict).toBe('keep');
+    expect(score(withSignals({ digestPins: 5 })).verdict).toBe('rewrite-as-contract');
     expect(score(withSignals({ skipped: 1 })).verdict).toBe('keep');
   });
 

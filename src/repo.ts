@@ -134,6 +134,53 @@ export function findDuplicates(files: Array<{ file: string; text: string }>): Ma
   return duplicates;
 }
 
+const MIN_LINE = 12;
+
+function distinctLines(text: string): Set<string> {
+  const lines = new Set<string>();
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (line.length >= MIN_LINE && !/^(import |\/\/|\*|\/\*|}|\)|];?$)/.test(line)) lines.add(line);
+  }
+  return lines;
+}
+
+/**
+ * For each file, the other file that contains the largest share of its
+ * distinct lines, when that share is at least `threshold`. Catches copy-pasted
+ * mock harnesses and forked test files that drifted only slightly.
+ */
+export function findSimilar(
+  files: Array<{ file: string; text: string }>,
+  threshold = 0.5,
+): Map<string, { file: string; share: number }> {
+  const sets = files.map(({ file, text }) => ({ file, lines: distinctLines(text) }));
+  const result = new Map<string, { file: string; share: number }>();
+  for (let i = 0; i < sets.length; i += 1) {
+    const a = sets[i];
+    if (!a || a.lines.size < 20) continue;
+    let best: { file: string; share: number } | null = null;
+    for (let j = 0; j < sets.length; j += 1) {
+      const b = sets[j];
+      if (!b || j === i || b.lines.size < a.lines.size * 0.4) continue;
+      let common = 0;
+      for (const line of a.lines) if (b.lines.has(line)) common += 1;
+      const share = common / a.lines.size;
+      if (share >= threshold && (!best || share > best.share)) best = { file: b.file, share };
+    }
+    if (best) result.set(a.file, { file: best.file, share: Math.round(best.share * 100) / 100 });
+  }
+  // When two files point at each other, report only the later one (listing
+  // order) so a pair yields one actionable row, matching findDuplicates.
+  const order = new Map(files.map(({ file }, i) => [file, i]));
+  for (const [file, match] of [...result]) {
+    const back = result.get(match.file);
+    if (back?.file === file && (order.get(file) ?? 0) < (order.get(match.file) ?? 0))
+      result.delete(file);
+  }
+  return result;
+}
+
 /** Read every test file in the repo and extract its signals. */
 export function collectRepo(options: CollectOptions): Signals[] {
   const root = resolve(options.root);
@@ -144,6 +191,7 @@ export function collectRepo(options: CollectOptions): Signals[] {
     text: readFileSync(join(root, file), 'utf8'),
   }));
   const duplicates = findDuplicates(files);
+  const similar = findSimilar(files);
   return files.map(({ file, text }) => {
     const source = siblingSource(root, file);
     return analyzeTest({
@@ -154,6 +202,7 @@ export function collectRepo(options: CollectOptions): Signals[] {
       churn: churnFor(churn, file, source),
       timing: timings.get(file) ?? null,
       duplicateOf: duplicates.get(file) ?? null,
+      similarTo: duplicates.has(file) ? null : (similar.get(file) ?? null),
     });
   });
 }

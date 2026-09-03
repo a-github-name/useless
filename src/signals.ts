@@ -54,6 +54,7 @@ export type AnalyzeInput = {
   churn: Churn;
   timing: Timing | null;
   duplicateOf?: string | null;
+  similarTo?: { file: string; share: number } | null;
 };
 
 /**
@@ -86,6 +87,9 @@ export function analyzeTest(input: AnalyzeInput): Signals {
   const literal = measureLiteralBlocks(lines);
   const callExpects = count(text, /\.toHaveBeenCalled(Times|With|Once|ExactlyOnceWith)?\s*\(/g);
   const callExpectsWith = count(text, /\.toHaveBeenCalled(With|ExactlyOnceWith)\s*\(/g);
+  const callExpectsCounted =
+    count(text, /\.toHaveBeenCalled(Times|Once)\s*\(/g) +
+    count(text, /\.not\.toHaveBeenCalled\s*\(/g);
 
   return {
     file,
@@ -100,12 +104,20 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     weakExpects:
       count(
         text,
-        /\.(toBeDefined|toBeTruthy|toBeFalsy|toBeUndefined|toBeInstanceOf|toBeTypeOf|toHaveBeenCalled|toBeInTheDocument|not\.toBeNull|not\.toBeUndefined)\s*\(/g,
+        /\.(toBeDefined|toBeTruthy|toBeFalsy|toBeUndefined|toBeInstanceOf|toBeTypeOf|toBeInTheDocument)\s*\(/g,
       ) +
       count(text, /typeof\s+[\w.]+\)\s*\.toBe\('/g) +
+      count(text, /(?<!\.not)\.toHaveBeenCalled\s*\(/g) +
+      count(text, /\.toBeGreaterThan(OrEqual)?\(\s*[01]\s*\)/g) +
+      count(text, /\.not\.toBe(Undefined|Null)?\(\s*(undefined|null|''|""|0)?\s*\)/g) +
       count(text, /\bassert(\.ok)?\s*\(/g),
     callExpects,
     callExpectsWith,
+    callExpectsCounted,
+    sqlTextAsserts: count(
+      text,
+      /\.(toContain|toMatch)\(\s*['"`][^'"`\n]*\b(SELECT|UPDATE|INSERT|DELETE|FROM|WHERE|JOIN|GROUP BY|ORDER BY|VALUES|json_set|json_extract)\b/g,
+    ),
     mocks: count(text, /\b(vi|jest)\.(mock|doMock|fn|spyOn|stubGlobal|stubEnv|hoisted)\b/g),
     moduleMocks: count(text, /\b(vi|jest)\.(mock|doMock)\(/g),
     sourceTextAsserts:
@@ -168,6 +180,7 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     skipped: count(text, /\b(it|test|describe)\.(skip|todo|fixme)\b/g),
     focused: count(text, /\b(it|test|describe)\.only\(/g),
     duplicateOf: input.duplicateOf ?? null,
+    similarTo: input.similarTo ?? null,
     testCommits: churn.testCommits,
     sourceCommits: churn.sourceCommits,
     coChangeCommits: churn.coChangeCommits,

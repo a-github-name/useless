@@ -8,6 +8,7 @@ import {
   buildChurnIndex,
   churnFor,
   findDuplicates,
+  findSimilar,
   listTestFiles,
   parseTimings,
   siblingSource,
@@ -104,6 +105,40 @@ describe('findDuplicates', () => {
       { file: 'c.test.ts', text: "it('y', () => {});" },
     ]);
     expect([...dupes.entries()]).toEqual([['b.test.ts', 'a.test.ts']]);
+  });
+});
+
+describe('findSimilar', () => {
+  const harness = Array.from(
+    { length: 30 },
+    (_, i) => `const mockThing${i} = vi.fn(() => ({ id: ${i} }));`,
+  );
+  it('reports the later file of a mutual pair, pointing at the earlier one', () => {
+    const a = [...harness, "it('a', () => { expect(run()).toBe(1); });"].join('\n');
+    const b = [...harness, "it('b', () => { expect(run()).toBe(2); });", 'const extra = 1;'].join(
+      '\n',
+    );
+    const c = Array.from(
+      { length: 30 },
+      (_, i) => `expect(values[${i}]).toEqual({ id: ${i} });`,
+    ).join('\n');
+    const similar = findSimilar([
+      { file: 'a.test.ts', text: a },
+      { file: 'b.test.ts', text: b },
+      { file: 'c.test.ts', text: c },
+    ]);
+    expect(similar.has('a.test.ts')).toBe(false);
+    expect(similar.get('b.test.ts')).toEqual({ file: 'a.test.ts', share: 0.94 });
+    expect(similar.has('c.test.ts')).toBe(false);
+  });
+  it('ignores small files and much larger partners', () => {
+    const tiny = "it('x', () => { expect(1).toBe(1); });";
+    expect(
+      findSimilar([
+        { file: 't.test.ts', text: tiny },
+        { file: 'u.test.ts', text: tiny },
+      ]).size,
+    ).toBe(0);
   });
 });
 

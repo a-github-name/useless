@@ -14,6 +14,10 @@ export type Signals = {
   callExpects: number;
   /** The subset that checks arguments (`toHaveBeenCalledWith`, `...ExactlyOnceWith`). */
   callExpectsWith: number;
+  /** The subset that checks a count or absence (`Times`, `Once`, `not.toHaveBeenCalled`). */
+  callExpectsCounted: number;
+  /** `toContain` / `toMatch` over SQL text. */
+  sqlTextAsserts: number;
   /** Every `vi.*` / `jest.*` mocking call. */
   mocks: number;
   /** `vi.mock` / `jest.mock` module replacements only. */
@@ -48,6 +52,8 @@ export type Signals = {
   focused: number;
   /** Another test file whose whitespace-stripped content is identical. */
   duplicateOf: string | null;
+  /** Another test file sharing most of this file's distinct lines, and the share. */
+  similarTo: { file: string; share: number } | null;
   testCommits: number;
   sourceCommits: number;
   coChangeCommits: number;

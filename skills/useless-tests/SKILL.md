@@ -32,12 +32,14 @@ raw signal and normalised component for every file.
 
 ## 2. Understand what the score means
 
-Score is 0–100, weighted sum of eight signals (tautology 25, weak 15, mock
-burden 15, cost 12, mirror 10, lockstep 10, environment 8, skipped 5). Median is
-usually under 12, p90 in the low 20s. Anything over 25 deserves a read, and the
-verdict column says which kind:
+Score is 0–100, weighted sum of eight signals (tautology 35, weak 12, mock
+burden 10, cost 15, mirror 8, lockstep 8, environment 7, skipped 5). Across 27
+calibration repos the median was 5 and p90 was 15. Anything over 25 deserves a
+read, and the verdict column says which kind:
 
-- `delete-duplicate`: byte-identical (modulo whitespace) to another test file.
+- `delete-duplicate`: byte-identical (modulo whitespace) to another test file,
+  or nearly so. A `review` with "N% of its lines also appear in X" is a fork
+  or a copy-pasted harness; read both files together.
 - `delete-or-rewrite`: the test cannot fail on a real bug (greps source, asserts
   a bare "mock was called", depends on git history, gated on a developer's
   machine).
@@ -48,8 +50,16 @@ verdict column says which kind:
   expectation, snapshots, digest pins, lockstep edits). State the invariant.
 - `review`: high score, ten-plus module mocks, or a committed `.only`.
 
-`toHaveBeenCalledWith(...)` on an injected fake is discounted: it is often the
-contract of an outbound boundary. Bare `toHaveBeenCalled()` is not.
+`toHaveBeenCalledWith(...)`, `toHaveBeenCalledTimes(n)` and
+`not.toHaveBeenCalled()` on an injected fake are discounted: they are often the
+contract of an outbound boundary or a callback. Bare `toHaveBeenCalled()` is
+not. Full-object `toEqual({...})` assertions are not a smell on their own;
+only a file that is mostly literal, or pins digests, sizes or snapshots, is.
+
+What the scorer cannot see, and the close-read must: a test that passes only
+because a non-injected helper swallows an error; a hand-written dispatch table
+in the source transcribed row by row; a scenario already covered in a sibling
+file; a fake D1/SQL layer that checks bind arity and nothing else.
 
 Known false positives: hand-rolled `vi.fn()` fakes, installer tests that shim
 `git`, fixture strings that contain the smell, and test-first features that

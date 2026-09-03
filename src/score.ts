@@ -2,13 +2,13 @@ import type { Scored, SignalName, Signals, Verdict } from './types.js';
 
 /** Weights sum to 100 so a score reads as "% of maximum plausible uselessness". */
 export const WEIGHTS: Record<SignalName, number> = {
-  tautology: 25,
-  weak: 15,
-  mockBurden: 15,
-  cost: 12,
-  mirror: 10,
-  lockstep: 10,
-  environment: 8,
+  tautology: 35,
+  weak: 12,
+  mockBurden: 10,
+  cost: 15,
+  mirror: 8,
+  lockstep: 8,
+  environment: 7,
   skipped: 5,
 };
 
@@ -34,16 +34,23 @@ export function score(signals: Signals): Scored {
   const tests = Math.max(1, signals.tests);
   const expects = Math.max(1, signals.expects);
 
-  // 1. Tautology: assertions about source text, repo files, repo history, or
-  //    mocks having been called. A bare `toHaveBeenCalled()` is worth a full
-  //    point; checking the arguments is half, and less again when nothing is
-  //    module-mocked, because then the fakes were injected and the call is
-  //    the boundary being tested.
-  const callBare = signals.callExpects - signals.callExpectsWith;
+  // 1. Tautology: assertions about source text, repo files, SQL text, repo
+  //    history, or mocks having been called. A bare `toHaveBeenCalled()` is a
+  //    full point; checking the count, absence, or arguments is half, and less
+  //    again when nothing is module-mocked, because then the fake was injected
+  //    and the call is the boundary being tested.
+  const callBare = signals.callExpects - signals.callExpectsWith - signals.callExpectsCounted;
   const injected = signals.moduleMocks === 0;
-  const callShare = (callBare + signals.callExpectsWith * (injected ? 0.3 : 0.5)) / expects;
+  const callShare =
+    (callBare +
+      signals.callExpectsCounted * (injected ? 0.35 : 0.5) +
+      signals.callExpectsWith * (injected ? 0.3 : 0.5)) /
+    expects;
   const tautology = clamp(
-    (signals.sourceTextAsserts * 2 + signals.repoTextAsserts * 1.5 + signals.gitShellouts * 3) /
+    (signals.sourceTextAsserts * 2 +
+      signals.repoTextAsserts * 1.5 +
+      signals.sqlTextAsserts +
+      signals.gitShellouts * 3) /
       expects +
       callShare,
   );
@@ -51,10 +58,15 @@ export function score(signals: Signals): Scored {
     reasons.push(`asserts on source text ×${signals.sourceTextAsserts}`);
   if (signals.repoTextAsserts > 0)
     reasons.push(`greps ${signals.repoTextAsserts} assertions over repo file contents`);
+  if (signals.sqlTextAsserts > 0) reasons.push(`pins SQL text ×${signals.sqlTextAsserts}`);
   if (signals.gitShellouts > 0) reasons.push(`depends on git history ×${signals.gitShellouts}`);
   if (signals.callExpects / expects > 0.4) {
-    const withArgs = signals.callExpectsWith / Math.max(1, signals.callExpects) >= 0.5;
-    const detail = withArgs ? ` (with args${injected ? ', injected fakes' : ''})` : '';
+    const checked =
+      (signals.callExpectsWith + signals.callExpectsCounted) / Math.max(1, signals.callExpects);
+    const detail =
+      checked >= 0.5
+        ? ` (${signals.callExpectsWith >= signals.callExpectsCounted ? 'with args' : 'counted'}${injected ? ', injected fakes' : ''})`
+        : '';
     reasons.push(`${pct(signals.callExpects / expects)} of expects are "mock was called"${detail}`);
   }
 
@@ -73,21 +85,30 @@ export function score(signals: Signals): Scored {
   // 4. Cost: lines per test, wall-clock time, and duplication.
   const linesPerTest = signals.lines / tests;
   const durationMs = signals.durationMs ?? 0;
+  const shared = signals.similarTo?.share ?? 0;
   const cost = signals.duplicateOf
     ? 1
-    : clamp(linesPerTest / 120) * 0.6 + clamp(durationMs / 20_000) * 0.4;
+    : clamp(
+        clamp(linesPerTest / 120) * 0.6 +
+          clamp(durationMs / 20_000) * 0.4 +
+          (shared >= 0.5 ? shared * 0.5 : 0),
+      );
   if (signals.duplicateOf) reasons.push(`identical to ${signals.duplicateOf}`);
+  else if (signals.similarTo && shared >= 0.5)
+    reasons.push(`${pct(shared)} of its lines also appear in ${signals.similarTo.file}`);
   if (linesPerTest > 80) reasons.push(`${Math.round(linesPerTest)} lines per test`);
   if (durationMs > 10_000) reasons.push(`${Math.round(durationMs / 1000)}s runtime`);
 
   // 5. Mirror: the test transcribes a fixture rather than stating a contract.
-  //    Measured by how much of the file is multi-line literal expectation,
-  //    plus snapshots, pinned digests and pinned sizes; on data subjects, a
-  //    high literal share counts too.
+  //    Pinned digests, pinned sizes, snapshots and deleted-file asserts are
+  //    the tell; on data subjects, a high literal share is too. A file that is
+  //    mostly multi-line literal expectation counts only for its excess over
+  //    40%: full-object `toEqual` assertions are usually strong tests, and
+  //    reviewers rated them that way.
   const literalShare = signals.literalExpects / expects;
   const literalLineShare = signals.literalLines / Math.max(1, signals.lines);
   const mirror = clamp(
-    literalLineShare * 1.5 +
+    Math.max(0, literalLineShare - 0.4) * 2 +
       signals.snapshotAsserts / tests +
       signals.inlineSnapshots / tests / 2 +
       signals.digestPins / 4 +
@@ -95,7 +116,7 @@ export function score(signals: Signals): Scored {
       signals.deletedFileAsserts / 3 +
       (signals.dataSubject ? literalShare : 0),
   );
-  if (literalLineShare >= 0.25 && signals.largeLiteralExpects >= 3)
+  if (literalLineShare >= 0.4 && signals.largeLiteralExpects >= 3)
     reasons.push(
       `${pct(literalLineShare)} of the file is literal expectation (${signals.largeLiteralExpects} blocks)`,
     );
@@ -146,11 +167,10 @@ export function score(signals: Signals): Scored {
     total += components[name] * WEIGHTS[name];
 
   let verdict: Verdict = 'keep';
-  if (signals.duplicateOf) verdict = 'delete-duplicate';
+  if (signals.duplicateOf || shared >= 0.9) verdict = 'delete-duplicate';
   else if (
     signals.gitShellouts > 0 ||
     tautology > 0.6 ||
-    signals.digestPins >= 3 ||
     signals.gatedSuites > 0 ||
     signals.repoTextAsserts >= 5
   )
@@ -159,17 +179,19 @@ export function score(signals: Signals): Scored {
   else if (
     signals.sourceLines !== null &&
     signals.sourceLines > 1500 &&
-    (mockBurden > 0.5 || weak > 0.5)
+    (mockBurden > 0.5 || weak > 0.5 || signals.lines > 1000)
   )
     verdict = 'refactor-source';
   else if (
-    (literalLineShare >= 0.3 && signals.largeLiteralExpects >= 3) ||
+    (literalLineShare >= 0.5 && signals.largeLiteralExpects >= 5) ||
     signals.snapshotAsserts >= 3 ||
+    signals.digestPins >= 5 ||
     (signals.dataSubject && literalShare > 0.7 && signals.mocks === 0) ||
     (lockstep >= 0.85 && signals.sourceCommits >= 10)
   )
     verdict = 'rewrite-as-contract';
-  else if (total >= 35 || signals.moduleMocks >= 10 || signals.focused > 0) verdict = 'review';
+  else if (total >= 35 || signals.moduleMocks >= 10 || signals.focused > 0 || shared >= 0.7)
+    verdict = 'review';
 
   return { ...signals, score: Math.round(total * 10) / 10, components, reasons, verdict };
 }
