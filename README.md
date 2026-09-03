@@ -166,6 +166,64 @@ form, still show up as duplicates. The reason names the partner file, so the
 reader sees the esm/cjs pairing immediately; the scorer does not try to guess
 intent.
 
+#### Mutation testing
+
+Reviewer opinion is still opinion. The ground truth for "can this test catch a
+bug" is mutation testing: mutate the source, see which tests fail. Stryker was
+run with per-test coverage and bail disabled, so every covering test runs
+against every mutant and kills are attributed to every test that catches them.
+Each test file is then judged on the mutants in its own sibling source module:
+covered, killed, and the survival rate.
+
+**mere-earth**, 37 test files: every flagged file whose source is under 1,500
+lines, plus the 18 lowest-scoring keep files as a contrast group. 7,351
+mutants.
+
+| Measure | Value |
+|---|---:|
+| Spearman, uselessness score vs mutant survival in own source | 0.82 |
+| Same, inside the 18 keep files only | 0.64 |
+| Same, inside the 11 flagged files only | 0.77 |
+| Same, with the cost component removed from the score | 0.71 |
+| Mean kill rate, `delete-or-rewrite` (4 files) | 15% |
+| Mean kill rate, `review` (4 files) | 45% |
+| Mean kill rate, `rewrite-as-contract` (3 files) | 50% |
+| Mean kill rate, `keep` (18 files) | 72% |
+
+The top-scoring file, `DeckGlobe.test.ts`, kills 4 of the 65 mutants in
+`DeckGlobe.ts`. The reviewers had rated it 85 and the scorer 59; both were
+right.
+
+**hono**, 61 test files across `src/utils`, `src/helper` and `src/middleware`,
+6,650 mutants. Every file scores `keep` in a 1 to 24 band, and kill rates sit
+between 60% and 90%.
+
+| Measure | Value |
+|---|---:|
+| Spearman, uselessness score vs mutant survival in own source | 0.06 |
+| Mean kill rate, top 20% by score | 65% |
+| Mean kill rate, bottom 20% by score | 67% |
+
+So the metric is a detector for the tail, not a fine-grained quality ranking.
+When a suite has tautological tests, the score finds them and orders them
+correctly against the healthy ones, even inside the keep group. When a suite
+has none, the score has nothing to say and should not be read as one. That is
+the intended contract: the verdict column is the product, the number is the
+triage order within it.
+
+Two smaller findings from the same data. The `mirror` signal correlates
+negatively with survival in both repos (-0.65 and -0.16): tests full of literal
+expectations kill mutants, so the remaining literal-share term is kept small.
+And the `cost` signal correlates at 0.79 on mere-earth, which means the
+expensive tests there really are the ones that catch nothing, but that is a
+property of that codebase rather than of cost itself.
+
+To reproduce on another repo: run Stryker with
+`coverageAnalysis: "perTest"`, `disableBail: true`, `ignoreStatic: true` and
+the JSON reporter, then
+`node docs/mutation-join.mjs reports/mutation/mutation.json useless.json <repo root>`
+where `useless.json` is the scorer's `--json` output.
+
 Things that were wrong in the first cut and are now handled:
 
 - A 28-file node:test suite scored zero because only `expect(` was counted.
