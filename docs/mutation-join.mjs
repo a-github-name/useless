@@ -2,7 +2,7 @@
 // Per test file: mutants it covers, mutants it kills, kill rate; plus unique kills.
 import { readFileSync } from 'node:fs';
 const [, , reportPath, scoresPath, rootArg] = process.argv;
-const root = (rootArg ?? '').replace(/\/$/, '') + '/';
+const root = `${(rootArg ?? '').replace(/\/$/, '')}/`;
 const rel = (f) =>
   (root !== '/' && f.startsWith(root) ? f.slice(root.length) : f).replace(/^\.\//, '');
 const report = JSON.parse(readFileSync(reportPath, 'utf8'));
@@ -24,10 +24,10 @@ const get = (f) => {
   return per.get(f);
 };
 const siblingOf = (testFile) => testFile.replace(/\.(test|spec)\.(tsx?)$/, '.$2');
-let totalMutants = 0,
-  killedTotal = 0,
-  survivedCovered = 0,
-  noCoverage = 0;
+let totalMutants = 0;
+let killedTotal = 0;
+let survivedCovered = 0;
+let noCoverage = 0;
 for (const [file, info] of Object.entries(report.files)) {
   for (const m of info.mutants) {
     totalMutants++;
@@ -64,10 +64,10 @@ for (const [file, s] of per) {
     console.error('no score for', file);
     continue;
   }
-  const covered = s.covered.size,
-    killed = s.killed.size;
-  const ownCovered = s.ownCovered.size,
-    ownKilled = s.ownKilled.size;
+  const covered = s.covered.size;
+  const killed = s.killed.size;
+  const ownCovered = s.ownCovered.size;
+  const ownKilled = s.ownKilled.size;
   rows.push({
     file,
     covered,
@@ -78,7 +78,7 @@ for (const [file, s] of per) {
     ownKilled,
     ownRate: ownCovered ? ownKilled / ownCovered : null,
     score: sc.score,
-    verdict: sc.verdict,
+    finding: sc.finding,
     weak: sc.expects ? sc.weakExpects / sc.expects : 0,
     tests: sc.tests,
     expects: sc.expects,
@@ -87,22 +87,24 @@ for (const [file, s] of per) {
 }
 rows.sort((a, b) => b.score - a.score);
 console.log(
-  '\n score  verdict            covered killed  kill%  | own-cov own-kill own%  weak%  file',
+  '\n score  finding            covered killed  kill%  | own-cov own-kill own%  weak%  file',
 );
 for (const r of rows)
   console.log(
-    ` ${String(r.score).padStart(5)}  ${r.verdict.padEnd(18)} ${String(r.covered).padStart(6)} ${String(r.killed).padStart(6)}  ${r.killRate === null ? '   -' : String(Math.round(r.killRate * 100)).padStart(4)}  | ${String(r.ownCovered).padStart(6)} ${String(r.ownKilled).padStart(7)} ${r.ownRate === null ? '   -' : String(Math.round(r.ownRate * 100)).padStart(4)}   ${String(Math.round(r.weak * 100)).padStart(4)}   ${r.file}`,
+    ` ${String(r.score).padStart(5)}  ${r.finding.padEnd(18)} ${String(r.covered).padStart(6)} ${String(r.killed).padStart(6)}  ${r.killRate === null ? '   -' : String(Math.round(r.killRate * 100)).padStart(4)}  | ${String(r.ownCovered).padStart(6)} ${String(r.ownKilled).padStart(7)} ${r.ownRate === null ? '   -' : String(Math.round(r.ownRate * 100)).padStart(4)}   ${String(Math.round(r.weak * 100)).padStart(4)}   ${r.file}`,
   );
 const rank = (a) => {
   const s = a.map((x, i) => [x, i]).sort((p, q) => p[0] - q[0]);
   const r = [];
-  s.forEach(([, i], k) => (r[i] = k));
+  s.forEach(([, i], k) => {
+    r[i] = k;
+  });
   return r;
 };
 const rho = (a, b) => {
-  const A = rank(a),
-    B = rank(b),
-    n = a.length;
+  const A = rank(a);
+  const B = rank(b);
+  const n = a.length;
   const d2 = A.reduce((acc, x, i) => acc + (x - B[i]) ** 2, 0);
   return 1 - (6 * d2) / (n * (n * n - 1));
 };
@@ -142,16 +144,17 @@ for (const c of ['tautology', 'weak', 'mockBurden', 'cost', 'mirror'])
       usable.map((r) => 1 - r.killRate),
     ).toFixed(2)}`,
   );
-const byVerdict = {};
+const byFinding = {};
 for (const r of usable) {
-  (byVerdict[r.verdict] ??= []).push(r.killRate);
+  byFinding[r.finding] ??= [];
+  byFinding[r.finding].push(r.killRate);
 }
-for (const [v, rates] of Object.entries(byVerdict))
+for (const [v, rates] of Object.entries(byFinding))
   console.log(
     `mean kill% for ${v}: ${Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 100)} (n=${rates.length})`,
   );
-const top = usable.slice(0, Math.max(3, Math.floor(usable.length * 0.2))),
-  bottom = usable.slice(-Math.max(3, Math.floor(usable.length * 0.2)));
+const top = usable.slice(0, Math.max(3, Math.floor(usable.length * 0.2)));
+const bottom = usable.slice(-Math.max(3, Math.floor(usable.length * 0.2)));
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
 console.log(
   `mean kill% top-20% by score: ${Math.round(mean(top.map((r) => r.killRate)) * 100)} · bottom-20%: ${Math.round(mean(bottom.map((r) => r.killRate)) * 100)}`,

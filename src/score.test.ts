@@ -54,13 +54,20 @@ describe('score', () => {
   it('weights sum to 100 and a clean test scores low with no reasons', () => {
     expect(Object.values(WEIGHTS).reduce((a, b) => a + b, 0)).toBe(100);
     const s = score(base);
-    expect(s.verdict).toBe('keep');
+    expect(s.finding).toBe('clean');
     expect(s.score).toBeLessThan(15);
     expect(s.reasons).toEqual([]);
     for (const value of Object.values(s.components)) {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('churn is reported but never scored: co-editing tracks feature work', () => {
+    const coupled = score(withSignals({ sourceCommits: 20, coChangeCommits: 20 }));
+    expect(coupled.score).toBe(score(base).score);
+    expect(coupled.reasons).toEqual([]);
+    expect(Object.keys(coupled.components)).not.toContain('lockstep');
   });
 
   it('never exceeds 100 even when every signal saturates', () => {
@@ -89,24 +96,33 @@ describe('score', () => {
     expect(s.score).toBe(100);
   });
 
-  it('git shell-outs are always delete-or-rewrite', () => {
-    const s = score(withSignals({ gitShellouts: 1 }));
-    expect(s.verdict).toBe('delete-or-rewrite');
-    expect(s.reasons).toContain('depends on git history ×1');
+  it('git shell-outs raise tautology but do not decide the finding on their own', () => {
+    // Installer and scaffolding tests legitimately drive a git shim; only the
+    // share of the file given over to it should matter.
+    const few = score(withSignals({ gitShellouts: 1, expects: 40 }));
+    expect(few.finding).toBe('clean');
+    expect(few.reasons).toContain('depends on git history ×1');
+    expect(few.components.tautology).toBeGreaterThan(0);
+    const dominated = score(withSignals({ gitShellouts: 6, expects: 12 }));
+    expect(dominated.finding).toBe('restates-implementation');
   });
 
-  it('grepping repo source is delete-or-rewrite once it dominates the file', () => {
-    expect(score(withSignals({ repoTextAsserts: 5, expects: 40 })).verdict).toBe(
-      'delete-or-rewrite',
-    );
-    expect(score(withSignals({ repoTextAsserts: 1, expects: 40 })).verdict).toBe('keep');
+  it('repo-source greps are only damning when they dominate the file', () => {
+    const dominated = score(withSignals({ repoTextAsserts: 20, expects: 22 }));
+    expect(dominated.finding).toBe('restates-implementation');
+    // A large behavioural test that happens to read one source file keeps its
+    // finding: five greps among forty assertions is not a source grep.
+    const incidental = score(withSignals({ repoTextAsserts: 5, expects: 40 }));
+    expect(incidental.finding).toBe('clean');
+    const one = score(withSignals({ repoTextAsserts: 1, expects: 40 }));
+    expect(one.finding).toBe('clean');
   });
 
   it('"mock was called" assertions raise tautology in proportion', () => {
     const half = score(withSignals({ callExpects: 6 }));
     const all = score(withSignals({ callExpects: 12 }));
     expect(all.components.tautology).toBeGreaterThan(half.components.tautology);
-    expect(all.verdict).toBe('delete-or-rewrite');
+    expect(all.finding).toBe('restates-implementation');
     expect(half.reasons).toContain('50% of expects are "mock was called"');
   });
 
@@ -121,7 +137,7 @@ describe('score', () => {
     expect(withMocked.components.tautology).toBeCloseTo(0.5);
     expect(withInjected.components.tautology).toBeCloseTo(0.3);
     expect(counted.components.tautology).toBeCloseTo(0.35);
-    expect(withInjected.verdict).toBe('keep');
+    expect(withInjected.finding).toBe('clean');
     expect(withInjected.reasons).toContain(
       '100% of expects are "mock was called" (with args, injected fakes)',
     );
@@ -133,38 +149,38 @@ describe('score', () => {
   it('SQL text pins count as tautology', () => {
     const s = score(withSignals({ sqlTextAsserts: 8 }));
     expect(s.components.tautology).toBeCloseTo(8 / 12);
-    expect(s.verdict).toBe('delete-or-rewrite');
+    expect(s.finding).toBe('restates-implementation');
     expect(s.reasons).toContain('pins SQL text ×8');
   });
 
   it('near-duplicates raise cost and become delete-duplicate at 90% shared lines', () => {
     const near = score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.95 } }));
-    expect(near.verdict).toBe('delete-duplicate');
+    expect(near.finding).toBe('duplicate');
     const partial = score(
       withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 }, lines: 400, weakExpects: 6 }),
     );
-    expect(partial.verdict).toBe('review');
+    expect(partial.finding).toBe('review');
     expect(partial.reasons).toContain('70% of its lines also appear in src/a.test.ts');
     expect(partial.components.cost).toBeGreaterThan(score(base).components.cost);
     const small = score(
       withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 }, lines: 60, weakExpects: 6 }),
     );
-    expect(small.verdict).toBe('keep');
+    expect(small.finding).toBe('clean');
     const cheap = score(
       withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.8 }, lines: 200, tests: 20 }),
     );
     expect(cheap.score).toBeLessThan(12);
-    expect(cheap.verdict).toBe('keep');
+    expect(cheap.finding).toBe('clean');
   });
 
   it('a huge test on a huge source is refactor-source even without mocks', () => {
-    expect(score(withSignals({ sourceLines: 9000, lines: 4600, tests: 70 })).verdict).toBe(
-      'refactor-source',
+    expect(score(withSignals({ sourceLines: 9000, lines: 4600, tests: 70 })).finding).toBe(
+      'oversized-unit',
     );
     const barrel = score(
       withSignals({ sourceLines: 4098, sourceFiles: 9, lines: 2266, tests: 21 }),
     );
-    expect(barrel.verdict).toBe('refactor-source');
+    expect(barrel.finding).toBe('oversized-unit');
     expect(barrel.reasons).toContain('tests a barrel over 9 files (4098 lines) as one unit');
   });
 
@@ -179,20 +195,20 @@ describe('score', () => {
 
   it('duplicates are delete-duplicate with saturated cost', () => {
     const dup = score(withSignals({ duplicateOf: 'src/other.test.ts' }));
-    expect(dup.verdict).toBe('delete-duplicate');
+    expect(dup.finding).toBe('duplicate');
     expect(dup.components.cost).toBe(1);
     expect(dup.reasons).toContain('identical to src/other.test.ts');
   });
 
   it('home-directory reads and real waits raise environment; .only forces review', () => {
     const home = score(withSignals({ machinePaths: 1 }));
-    expect(home.verdict).toBe('keep');
+    expect(home.finding).toBe('clean');
     expect(home.reasons).toContain('reads the real home directory');
     const waits = score(withSignals({ realWaits: 2 }));
-    expect(waits.verdict).toBe('keep');
+    expect(waits.finding).toBe('clean');
     expect(waits.components.environment).toBeCloseTo(2 / 3);
     const focused = score(withSignals({ focused: 1 }));
-    expect(focused.verdict).toBe('review');
+    expect(focused.finding).toBe('review');
     expect(focused.reasons).toContain('.only left in (1)');
   });
 
@@ -203,67 +219,56 @@ describe('score', () => {
   });
 
   it('python shell-outs route to move-to-integration', () => {
-    expect(score(withSignals({ pythonShellouts: 2 })).verdict).toBe('move-to-integration');
+    expect(score(withSignals({ pythonShellouts: 2 })).finding).toBe('external-dependency');
   });
 
   it('a heavily mocked or weak test of a huge module blames the source', () => {
     const mocked = score(withSignals({ sourceLines: 3000, moduleMocks: 8 }));
-    expect(mocked.verdict).toBe('refactor-source');
+    expect(mocked.finding).toBe('oversized-unit');
     const weak = score(withSignals({ sourceLines: 3000, weakExpects: 10 }));
-    expect(weak.verdict).toBe('refactor-source');
+    expect(weak.finding).toBe('oversized-unit');
     const small = score(withSignals({ sourceLines: 300, moduleMocks: 8 }));
-    expect(small.verdict).not.toBe('refactor-source');
+    expect(small.finding).not.toBe('oversized-unit');
   });
 
   it('transcribed fixtures become rewrite-as-contract', () => {
     const literal = score(withSignals({ dataSubject: true, literalExpects: 11 }));
-    expect(literal.verdict).toBe('rewrite-as-contract');
+    expect(literal.finding).toBe('transcribes-fixture');
     expect(literal.reasons).toContain('92% literal assertions on a data module');
     const large = score(withSignals({ largeLiteralExpects: 6, literalLines: 72, lines: 120 }));
-    expect(large.verdict).toBe('rewrite-as-contract');
+    expect(large.finding).toBe('transcribes-fixture');
     expect(large.reasons).toContain('60% of the file is literal expectation (6 blocks)');
     const fewButBig = score(withSignals({ largeLiteralExpects: 2, literalLines: 72, lines: 120 }));
-    expect(fewButBig.verdict).toBe('keep');
+    expect(fewButBig.finding).toBe('clean');
     const fullObjects = score(
       withSignals({ largeLiteralExpects: 6, literalLines: 36, lines: 120 }),
     );
     expect(fullObjects.components.mirror).toBe(0);
-    expect(fullObjects.verdict).toBe('keep');
+    expect(fullObjects.finding).toBe('clean');
     const snapshots = score(withSignals({ snapshotAsserts: 3 }));
-    expect(snapshots.verdict).toBe('rewrite-as-contract');
+    expect(snapshots.finding).toBe('transcribes-fixture');
     const fewSnapshots = score(withSignals({ snapshotAsserts: 3, tests: 20 }));
-    expect(fewSnapshots.verdict).toBe('keep');
-  });
-
-  it('lockstep needs history before it counts', () => {
-    const young = score(withSignals({ sourceCommits: 3, coChangeCommits: 3 }));
-    expect(young.components.lockstep).toBe(0);
-    const coupled = score(withSignals({ sourceCommits: 12, coChangeCommits: 11 }));
-    expect(coupled.components.lockstep).toBeGreaterThan(0.85);
-    expect(coupled.verdict).toBe('rewrite-as-contract');
-    const midHistory = score(withSignals({ sourceCommits: 6, coChangeCommits: 6 }));
-    expect(midHistory.reasons).toContain('edited in 6/6 source commits (lockstep)');
-    expect(midHistory.verdict).toBe('keep');
+    expect(fewSnapshots.finding).toBe('clean');
   });
 
   it('machine-gated suites are delete-or-rewrite; platform gates and skips are not', () => {
-    expect(score(withSignals({ gatedSuites: 1 })).verdict).toBe('keep');
-    expect(score(withSignals({ gatedSuites: 1, machineGates: 1 })).verdict).toBe(
-      'delete-or-rewrite',
+    expect(score(withSignals({ gatedSuites: 1 })).finding).toBe('clean');
+    expect(score(withSignals({ gatedSuites: 1, machineGates: 1 })).finding).toBe(
+      'restates-implementation',
     );
-    expect(score(withSignals({ digestPins: 3 })).verdict).toBe('keep');
-    expect(score(withSignals({ digestPins: 5 })).verdict).toBe('rewrite-as-contract');
-    expect(score(withSignals({ skipped: 1 })).verdict).toBe('keep');
+    expect(score(withSignals({ digestPins: 3 })).finding).toBe('clean');
+    expect(score(withSignals({ digestPins: 5 })).finding).toBe('transcribes-fixture');
+    expect(score(withSignals({ skipped: 1 })).finding).toBe('clean');
   });
 
   it('many module mocks alone are worth a review', () => {
-    expect(score(withSignals({ moduleMocks: 10 })).verdict).toBe('review');
+    expect(score(withSignals({ moduleMocks: 10 })).finding).toBe('review');
   });
 
   it('runtime and lines per test feed cost but do not change the verdict on their own', () => {
     const slow = score(withSignals({ durationMs: 30_000, lines: 1200, tests: 6 }));
     expect(slow.components.cost).toBeGreaterThan(0.9);
     expect(slow.reasons).toEqual(expect.arrayContaining(['200 lines per test', '30s runtime']));
-    expect(slow.verdict).toBe('keep');
+    expect(slow.finding).toBe('clean');
   });
 });

@@ -126,16 +126,22 @@ describe('analyzeTest', () => {
     expect(analyze(tmp).repoTextAsserts).toBe(0);
   });
 
-  it('detects git history and python dependencies', () => {
+  it('detects git and python only when they are actually invoked', () => {
     const s = analyze(
-      [
-        "execFileSync('git', ['log', '--oneline']);",
-        "expect(diff).not.toContain('origin/main');",
-        "spawnSync('uv', ['run', 'script.py']);",
-      ].join('\n'),
+      ["execFileSync('git', ['log', '--oneline']);", "spawnSync('uv', ['run', 'script.py']);"].join(
+        '\n',
+      ),
     );
-    expect(s.gitShellouts).toBeGreaterThanOrEqual(2);
-    expect(s.pythonShellouts).toBeGreaterThanOrEqual(1);
+    expect(s.gitShellouts).toBe(1);
+    expect(s.pythonShellouts).toBe(1);
+    // A branch name or a filename in a fixture is not a dependency on either.
+    const mentions = analyze(
+      ["expect(diff).not.toContain('origin/main');", "await writeFile('render.py', 'x');"].join(
+        '\n',
+      ),
+    );
+    expect(mentions.gitShellouts).toBe(0);
+    expect(mentions.pythonShellouts).toBe(0);
   });
 
   it('detects transcription: digests, count pins, large literals, deleted-file asserts', () => {

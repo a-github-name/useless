@@ -35,40 +35,50 @@ signal and normalised component for every file.
 
 ## 2. Understand what the score means
 
-Score is 0–100, weighted sum of eight signals (tautology 35, weak 12, mock
-burden 10, cost 15, mirror 8, lockstep 8, environment 7, skipped 5). Across 27
-calibration repos the median was 5 and p90 was 15. Anything over 25 deserves a
-read, and the verdict column says which kind:
+Score is 0–100, a weighted sum of seven signals (tautology 40, cost 18, weak
+12, mock burden 10, mirror 8, environment 7, skipped 5). Across 41 calibration
+repos the median was about 4 and p90 about 13. Anything over 25 deserves a
+read.
 
-- `delete-duplicate`: byte-identical (modulo whitespace) to another test file,
-  or nearly so. A `review` with "N% of its lines also appear in X" is a fork
-  or a copy-pasted harness; read both files together.
-- `delete-or-rewrite`: the test cannot fail on a real bug (greps source, asserts
-  a bare "mock was called", depends on git history, gated on a developer's
-  machine).
-- `move-to-integration`: shells out to python/uv; keep it, not in the unit suite.
-- `refactor-source`: the test is the bill for a >1,500-line module. Fix the
+The `finding` column names what the signals observed. It is not an
+instruction: the tool cannot know whether a test should be deleted, and saying
+so on regex evidence would overstate what it can see. Findings and what they
+usually mean:
+
+- `duplicate`: identical to another test file, or nearly. A `review` with
+  "N% of its lines also appear in X" is a fork or a copy-pasted harness; read
+  both files together.
+- `restates-implementation`: as written it cannot fail on a real bug. It
+  greps repo source (and those greps are most of the file), asserts a bare
+  "mock was called", or is gated on a developer's machine.
+- `external-dependency`: spawns python/uv. Usually keep it, out of the unit
+  suite.
+- `oversized-unit`: the test is the bill for a >1,500-line module. Fix the
   module, not the test. When the reason says "tests a barrel over N files",
   the module has already been split and the test has not; split the test along
   the same seams.
-- `rewrite-as-contract`: transcribes a fixture (a third of the file is literal
-  expectation, snapshots, digest pins, lockstep edits). State the invariant.
-- `review`: high score, ten-plus module mocks, or a committed `.only`.
+- `transcribes-fixture`: restates current output rather than an invariant.
+  Treat this as maintenance cost, not weak coverage: in mutation testing these
+  files killed bugs at about the same rate as clean ones.
+- `review`: high score, ten-plus module mocks, a committed `.only`, or heavy
+  line-sharing with another file.
 
 `toHaveBeenCalledWith(...)`, `toHaveBeenCalledTimes(n)` and
 `not.toHaveBeenCalled()` on an injected fake are discounted: they are often the
 contract of an outbound boundary or a callback. Bare `toHaveBeenCalled()` is
-not. Full-object `toEqual({...})` assertions are not a smell on their own;
-only a file that is mostly literal, or pins digests, sizes or snapshots, is.
+not. Full-object `toEqual({...})` assertions are not a smell on their own.
+
+Test/source co-editing is reported but deliberately not scored. It tracks
+feature work landing with its tests; against mutation data it correlates
+*negatively* with weakness. Do not treat it as evidence.
 
 What the scorer cannot see, and the close-read must: a test that passes only
 because a non-injected helper swallows an error; a hand-written dispatch table
 in the source transcribed row by row; a scenario already covered in a sibling
 file; a fake D1/SQL layer that checks bind arity and nothing else.
 
-Known false positives: hand-rolled `vi.fn()` fakes, installer tests that shim
-`git`, fixture strings that contain the smell, and test-first features that
-look like lockstep.
+Known false positives: hand-rolled `vi.fn()` fakes, and fixture strings that
+contain the smell being detected.
 
 ## 3. Close-read the outliers
 
@@ -114,13 +124,18 @@ Deliver a document with, in this order:
    repo.
 4. The metric table (weights) and how to re-run it.
 5. What the tests reveal about the repo's practices, with the giants table.
-6. Verdicts, grouped: delete or fold; move out of unit suite; rewrite as
-   contract or table; refactor source; keep. Each row: file, one-line reason,
-   the concrete replacement.
+6. Recommendations, grouped by what you decided after reading: delete or fold;
+   move out of the unit suite; rewrite as a contract; refactor the source;
+   keep. These are your calls, so state them in your own words and attribute
+   them to the close-reads, not to the scorer. Each row: file, one-line
+   reason, the concrete replacement.
 7. Suggested guardrails: a lint rule for each tautology class found, a scorer
    run in CI as a job summary with a ratchet on p90, and a coverage config that
    stops steering tests toward the wrong trees.
-8. The top-40 table from the scorer, verbatim.
+8. The top-40 table from the scorer, verbatim, with a line saying findings in
+   it are the scorer's observations and the tables above are the decisions.
+   Commit the scorer's `--json` output next to the document so the published
+   table, including any timing-adjusted scores, can be regenerated.
 
 Put it where the repo keeps reference docs (for example `docs/reference/`),
 and wire it into the docs nav if there is one.
@@ -128,7 +143,10 @@ and wire it into the docs nav if there is one.
 ## 6. Do not
 
 - Delete tests in the same change as the audit. Ship the audit, let the owner
-  pick from the delete list.
+  pick from the list.
+- Present a finding as an instruction. "The scorer flagged this as
+  restates-implementation" is reporting; "delete this file" is a claim you own
+  and must have read the file to make.
 - Treat a red test as useless. A tautology test that is red on main is a
   finding about the source, not the test; report it separately.
 - Tune weights to make a specific file win or lose. If a signal is wrong,

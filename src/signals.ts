@@ -221,7 +221,7 @@ export function analyzeTest(input: AnalyzeInput): Signals {
     ),
     gitShellouts: count(
       text,
-      /(execFileSync|execSync|spawnSync|execa)\(\s*['"]git['"]|\bgit (log|rev-parse|show|diff|ls-files)\b|origin\/(main|master)/g,
+      /(execFileSync|execSync|spawnSync|execa)\(\s*['"]git['"]|['"`]git (log|rev-parse|show|diff|ls-files|merge-base)\b/g,
     ),
     pythonShellouts: count(
       text,

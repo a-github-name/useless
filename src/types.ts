@@ -62,6 +62,7 @@ export type Signals = {
   sharedHarnessLines: number;
   /** How many test files share this file's most-repeated block. */
   sharedHarnessFiles: number;
+  /** Churn, reported but not scored: co-editing tracks feature work, not transcription. */
   testCommits: number;
   sourceCommits: number;
   coChangeCommits: number;
@@ -69,14 +70,19 @@ export type Signals = {
   failed: boolean;
 };
 
-export type Verdict =
-  | 'delete-duplicate'
-  | 'delete-or-rewrite'
-  | 'move-to-integration'
-  | 'refactor-source'
-  | 'rewrite-as-contract'
+/**
+ * What the signals observed, not what to do about it. Naming an action the
+ * scorer cannot justify ("delete") overstates what regexes can know; the
+ * recommended action is a human call, made after reading the file.
+ */
+export type Finding =
+  | 'duplicate'
+  | 'restates-implementation'
+  | 'external-dependency'
+  | 'oversized-unit'
+  | 'transcribes-fixture'
   | 'review'
-  | 'keep';
+  | 'clean';
 
 export type SignalName =
   | 'tautology'
@@ -84,7 +90,6 @@ export type SignalName =
   | 'mockBurden'
   | 'cost'
   | 'mirror'
-  | 'lockstep'
   | 'environment'
   | 'skipped';
 
@@ -94,12 +99,13 @@ export type Scored = Signals & {
   /** Each normalised signal in [0, 1], before weighting. */
   components: Record<SignalName, number>;
   reasons: string[];
-  verdict: Verdict;
+  finding: Finding;
 };
 
 export type Timing = { durationMs: number; failed: boolean };
 
 export type Churn = {
+  /** Churn, reported but not scored: co-editing tracks feature work, not transcription. */
   testCommits: number;
   sourceCommits: number;
   coChangeCommits: number;

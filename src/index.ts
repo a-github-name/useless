@@ -11,10 +11,10 @@ export {
 export type { CollectOptions } from './repo.js';
 export { markdownTable, summarize, summaryLines } from './report.js';
 export type { Summary } from './report.js';
-export { VERDICT_ORDER, WEIGHTS, score } from './score.js';
+export { FINDING_GUIDANCE, FINDING_ORDER, WEIGHTS, score } from './score.js';
 export { analyzeTest, countFunctions, measureLiteralBlocks } from './signals.js';
 export type { AnalyzeInput } from './signals.js';
-export type { Churn, Scored, SignalName, Signals, Timing, Verdict } from './types.js';
+export type { Churn, Finding, Scored, SignalName, Signals, Timing } from './types.js';
 
 import { collectRepo } from './repo.js';
 import type { CollectOptions } from './repo.js';

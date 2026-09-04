@@ -1,33 +1,44 @@
-import type { Scored, SignalName, Signals, Verdict } from './types.js';
+import type { Finding, Scored, SignalName, Signals } from './types.js';
 
 /** Weights sum to 100 so a score reads as "% of maximum plausible uselessness". */
 export const WEIGHTS: Record<SignalName, number> = {
-  tautology: 35,
+  tautology: 40,
   weak: 12,
   mockBurden: 10,
-  cost: 15,
+  cost: 18,
   mirror: 8,
-  lockstep: 8,
   environment: 7,
   skipped: 5,
 };
 
-export const VERDICT_ORDER: Verdict[] = [
-  'delete-duplicate',
-  'delete-or-rewrite',
-  'move-to-integration',
-  'refactor-source',
-  'rewrite-as-contract',
+export const FINDING_ORDER: Finding[] = [
+  'duplicate',
+  'restates-implementation',
+  'external-dependency',
+  'oversized-unit',
+  'transcribes-fixture',
   'review',
-  'keep',
+  'clean',
 ];
+
+/** What each finding usually means to do. The reader decides; this is a prompt, not a verdict. */
+export const FINDING_GUIDANCE: Record<Finding, string> = {
+  duplicate: 'read both files together; fold or share',
+  'restates-implementation':
+    'cannot fail on a real bug as written; replace with a behavioural test or a lint rule',
+  'external-dependency': 'keep, but out of the unit suite',
+  'oversized-unit': 'the cost is the module, not the test; split along its seams',
+  'transcribes-fixture': 'state the invariant instead of the current output',
+  review: 'worth a human read; the reasons say why',
+  clean: 'no signal worth acting on',
+};
 
 const clamp = (value: number, min = 0, max = 1): number => Math.min(max, Math.max(min, value));
 const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
 /**
- * Map raw signals to [0, 1] components, weight them, and attach a verdict
- * hint plus the human-readable reasons behind it.
+ * Map raw signals to [0, 1] components, weight them, and attach a finding
+ * plus the human-readable reasons behind it.
  */
 export function score(signals: Signals): Scored {
   const reasons: string[] = [];
@@ -135,17 +146,7 @@ export function score(signals: Signals): Scored {
   if (signals.dataSubject && literalShare > 0.7 && signals.mocks === 0)
     reasons.push(`${pct(literalShare)} literal assertions on a data module`);
 
-  // 6. Lockstep: the test is edited in (nearly) every commit that touches the
-  //    source, so it restates the implementation rather than a contract.
-  //    Only meaningful once the source has some history.
-  const lockstep =
-    signals.sourceCommits >= 5 ? clamp(signals.coChangeCommits / signals.sourceCommits) : 0;
-  if (lockstep >= 0.85)
-    reasons.push(
-      `edited in ${signals.coChangeCommits}/${signals.sourceCommits} source commits (lockstep)`,
-    );
-
-  // 7. Environment coupling: external interpreters, real clocks, this machine.
+  // 6. Environment coupling: external interpreters, real clocks, this machine.
   const environment = clamp(
     signals.pythonShellouts / 2 + signals.realWaits / 3 + signals.machinePaths / 2,
   );
@@ -153,7 +154,7 @@ export function score(signals: Signals): Scored {
   if (signals.realWaits > 0) reasons.push(`${signals.realWaits} real-clock wait(s)`);
   if (signals.machinePaths > 0) reasons.push('reads the real home directory');
 
-  // 8. Skipped, gated, or focused tests are cost with no guaranteed signal.
+  // 7. Skipped, gated, or focused tests are cost with no guaranteed signal.
   const skipped = clamp((signals.skipped + signals.gatedSuites + signals.focused * 2) / tests);
   if (signals.skipped > 0) reasons.push(`${signals.skipped} skipped`);
   if (signals.machineGates > 0) reasons.push('suite gated on this machine');
@@ -166,7 +167,6 @@ export function score(signals: Signals): Scored {
     mockBurden,
     cost,
     mirror,
-    lockstep,
     environment,
     skipped,
   };
@@ -174,22 +174,24 @@ export function score(signals: Signals): Scored {
   for (const name of Object.keys(WEIGHTS) as SignalName[])
     total += components[name] * WEIGHTS[name];
 
-  let verdict: Verdict = 'keep';
-  if (signals.duplicateOf || shared >= 0.9) verdict = 'delete-duplicate';
+  let finding: Finding = 'clean';
+  if (signals.duplicateOf || shared >= 0.9) finding = 'duplicate';
   else if (
-    signals.gitShellouts > 0 ||
     tautology > 0.6 ||
     signals.machineGates > 0 ||
-    signals.repoTextAsserts >= 5
+    // Reading repo source is only damning when those assertions dominate the
+    // file: a large test that reads one source file among forty behavioural
+    // assertions is not a source grep.
+    (signals.repoTextAsserts >= 5 && signals.repoTextAsserts / expects >= 0.5)
   )
-    verdict = 'delete-or-rewrite';
-  else if (signals.pythonShellouts > 0) verdict = 'move-to-integration';
+    finding = 'restates-implementation';
+  else if (signals.pythonShellouts > 0) finding = 'external-dependency';
   else if (
     signals.sourceLines !== null &&
     signals.sourceLines > 1500 &&
     (mockBurden > 0.5 || weak > 0.5 || signals.lines > 1000)
   ) {
-    verdict = 'refactor-source';
+    finding = 'oversized-unit';
     if ((signals.sourceFiles ?? 1) > 1)
       reasons.push(
         `tests a barrel over ${signals.sourceFiles} files (${signals.sourceLines} lines) as one unit`,
@@ -198,17 +200,16 @@ export function score(signals: Signals): Scored {
     (literalLineShare >= 0.5 && signals.largeLiteralExpects >= 5) ||
     (signals.snapshotAsserts >= 3 && signals.snapshotAsserts >= tests / 2) ||
     signals.digestPins >= 5 ||
-    (signals.dataSubject && literalShare > 0.7 && signals.mocks === 0) ||
-    (lockstep >= 0.85 && signals.sourceCommits >= 10)
+    (signals.dataSubject && literalShare > 0.7 && signals.mocks === 0)
   )
-    verdict = 'rewrite-as-contract';
+    finding = 'transcribes-fixture';
   else if (
     total >= 35 ||
     signals.moduleMocks >= 10 ||
     signals.focused > 0 ||
     (shared >= 0.7 && signals.lines > 100 && total >= 12)
   )
-    verdict = 'review';
+    finding = 'review';
 
-  return { ...signals, score: Math.round(total * 10) / 10, components, reasons, verdict };
+  return { ...signals, score: Math.round(total * 10) / 10, components, reasons, finding };
 }

@@ -32,19 +32,20 @@ npx useless --timings .vitest.json
 ## What comes out
 
 ```
-533 test files · 122179 lines · 2705 tests · 12607 expects (10% weak) · 1447 mocks (163 module mocks)
-score median 5.4 · p90 15.2
-delete-or-rewrite: 17 · move-to-integration: 1 · refactor-source: 9 · rewrite-as-contract: 10 · review: 5 · keep: 491
+534 test files · 122313 lines · 2709 tests · 12632 expects (10% weak) · 1447 mocks (163 module mocks)
+score median 6 · p90 14.8 · 105 lines of setup duplicated across 2 files
+restates-implementation: 10 · external-dependency: 1 · oversized-unit: 9 · transcribes-fixture: 9 · review: 6 · clean: 499
 
-| score | verdict | file | lines | tests | expects | weak% | mocks | reasons |
+| score | finding | file | lines | tests | expects | weak% | mocks | reasons |
 |---:|---|---|---:|---:|---:|---:|---:|---|
-| 59.1 | delete-or-rewrite | `app/src/components/DeckGlobe.test.ts` | 99 | 1 | 4 | 100 | 8 | 100% of expects are "mock was called"; 100% weak assertions; 8.0 mocks per test; 99 lines per test |
-| 47.8 | delete-or-rewrite | `app/src/components/Globe.test.ts` | 141 | 1 | 5 | 60 | 31 | 80% of expects are "mock was called"; 60% weak assertions; 31.0 mocks per test; 141 lines per test |
-| 47 | delete-or-rewrite | `app/src/components/FlatMap.test.ts` | 173 | 2 | 8 | 63 | 25 | 75% of expects are "mock was called"; 63% weak assertions; 12.5 mocks per test; 87 lines per test |
+| 65.6 | restates-implementation | `app/src/components/DeckGlobe.test.ts` | 99 | 1 | 4 | 100 | 8 | 100% of expects are "mock was called"; 100% weak assertions; 8.0 mocks per test; 99 lines per test |
+| 51.5 | restates-implementation | `app/src/components/Globe.test.ts` | 141 | 1 | 5 | 60 | 31 | 80% of expects are "mock was called"; 60% weak assertions; 31.0 mocks per test; 141 lines per test |
+| 49 | review | `app/src/lib/analyst-current-context-map-layer.test.ts` | 134 | 1 | 10 | 50 | 19 | 70% of expects are "mock was called"; 5 module mocks; 134 lines per test |
 ```
 
-The score is a triage order, not a verdict. Read the reasons column; it is the
-whole point. `--json` dumps every raw signal and every normalised component so
+The score is a triage order and the finding is an observation; neither is a
+decision. Read the reasons column, then read the file. `useless-tests` never
+tells you to delete anything. `--json` dumps every raw signal and every normalised component so
 you can re-weight without re-scanning.
 
 ## The four ways a test is useless
@@ -71,41 +72,48 @@ Each signal is normalised to [0, 1] and weighted. Weights sum to 100.
 
 | Signal | Weight | What it measures |
 |---|---:|---|
-| Tautology | 35 | source-text asserts, repo-file greps, SQL text pins, git shell-outs, "mock was called" share of expects. A bare `toHaveBeenCalled()` counts in full; `toHaveBeenCalledTimes`, `not.toHaveBeenCalled()` and `toHaveBeenCalledWith(...)` count half, and less again when the file has no module mocks, because then the fake was injected and the call is the boundary under test |
+| Tautology | 40 | source-text asserts, repo greps, SQL pins, git shell-outs, "mock was called" share of expects. A bare `toHaveBeenCalled()` counts in full; `toHaveBeenCalledTimes`, `not.toHaveBeenCalled()` and `toHaveBeenCalledWith(...)` count half, and less again when the file has no module mocks, because then the fake was injected and the call is the boundary under test |
 | Weak assertions | 12 | `toBeTruthy`, `toBeDefined`, `toBeInTheDocument`, bare `toHaveBeenCalled()`, `toBeGreaterThan(0)`, `not.toBeNull()`, `assert.ok` share of expects |
 | Mock burden | 10 | module mocks (`vi.mock`/`jest.mock`, heavy) and fn stubs per test (light) |
-| Cost | 15 | lines per test, runtime when a JSON report is supplied, share of lines copied from another test file, lines of setup that a block repeated in three or more files accounts for; saturated for an exact duplicate |
+| Cost | 18 | lines per test, runtime when a JSON report is supplied, share of lines copied from another test file, lines of setup that a block repeated in three or more files accounts for; saturated for an exact duplicate |
 | Mirror | 8 | pinned digests, pinned sizes, snapshots, deleted-file asserts, literal share on data subjects, and only the *excess* of multi-line literal expectation over 40% of the file |
-| Lockstep | 8 | share of source commits that also edited the test (needs ≥5 source commits) |
 | Environment | 7 | spawns python/uv, real-clock waits without fake timers, unmocked reads of the home directory |
-| Skipped/gated | 5 | `skip`, `todo`, `fixme`, `runIf`/`skipIf`, and `.only` left in |
+| Skipped/gated | 5 | `skip`, `todo`, `fixme`, `runIf`/`skipIf` on this machine, and `.only` left in |
 
-### Verdict hints
+Test/source co-editing churn is collected and reported in `--json`, but not
+scored. See the calibration notes below for why.
 
-| Verdict | Trigger | What to do |
+
+### Findings
+
+A finding names what the signals observed, not what to do about it. The tool
+cannot know whether a test should be deleted; that is a call you make after
+reading the file. The last column is a prompt for that reading.
+
+| Finding | Trigger | Usually means |
 |---|---|---|
-| `delete-duplicate` | identical to another test file, or ≥90% of its distinct lines appear in one | Delete the copy, or make it a shared test |
-| `delete-or-rewrite` | git shell-outs, tautology > 0.6, environment-gated suite, ≥5 asserts over repo source text | Delete, or replace with a lint rule / a behavioural test |
-| `move-to-integration` | spawns python/uv | Keep it, but out of the unit suite |
-| `refactor-source` | source > 1,500 lines and (mock burden > 0.5, weak > 0.5, or the test itself > 1,000 lines). A sibling that is a re-export barrel is followed to the modules behind it, so a test that targets the barrel is measured against the code it exercises | The test is the bill for the module. Split the module, or split the test along the module's existing seams. |
-| `rewrite-as-contract` | ≥50% of the file is literal expectation across ≥5 blocks; ≥3 file snapshots; ≥5 digest pins; literal-only asserts on a data module; lockstep on a source with ≥10 commits | State the invariant instead of transcribing the output |
-| `review` | score ≥ 35, ≥10 module mocks, a committed `.only`, or ≥70% of its lines shared with another test file | Worth a human read; the reasons say why |
-| `keep` | everything else | |
+| `duplicate` | identical to another test file, or ≥90% of its distinct lines appear in one | read both together; fold or share |
+| `restates-implementation` | tautology > 0.6, a suite gated on this machine, or repo-source greps that are ≥5 assertions **and** at least half the file's assertions | cannot fail on a real bug as written; replace with a behavioural test or a lint rule |
+| `external-dependency` | spawns python/uv | keep, but out of the unit suite |
+| `oversized-unit` | source > 1,500 lines and (mock burden > 0.5, weak > 0.5, or the test itself > 1,000 lines). A sibling that is a re-export barrel is followed to the modules behind it | the cost is the module, not the test; split along its seams |
+| `transcribes-fixture` | ≥50% of the file is literal expectation across ≥5 blocks; ≥3 file snapshots covering half the tests; ≥5 digest pins; literal-only asserts on a data module | a maintenance cost, not a detection failure: state the invariant instead of the current output |
+| `review` | score ≥ 35, ≥10 module mocks, a committed `.only`, or ≥70% of its lines shared with another test file | worth a human read; the reasons say why |
+| `clean` | everything else | no signal worth acting on |
+
 
 ### Known false positives
 
 - Hand-rolled fakes built from `vi.fn()` count as mocks. The weight on fn stubs
   is low for this reason, but a fixture-heavy test can still score in the 20s.
-- Installer or scaffolding tests that shim `git` through a fake binary trip the
-  git shell-out rule. Read them before deleting.
 - A test that reads a JSON fixture and also mentions a `.ts` filename in a
   string reads as grepping the repo.
-- The lockstep signal cannot tell "restates the implementation" from "the
-  feature was built test-first in the same commits". It only fires once the
-  source has enough history to make coincidence unlikely.
 - Fixture strings that *contain* a smell read as the smell. The scorer cannot
   tell `expect(src).toContain('export')` from a string literal holding that
   text. Its own `src/signals.test.ts` scores high for exactly this reason.
+- `transcribes-fixture` files kill mutants at roughly the rate of clean ones
+  (68% against 70% in the run below). Read that finding as maintenance cost,
+  not as weak coverage.
+
 
 ### Calibration
 
@@ -118,10 +126,10 @@ it, and gave a 0–100 uselessness rating and a verdict.
 
 | Measure | Value |
 |---|---:|
-| Spearman rank correlation, scorer vs reviewer rating | 0.68 |
-| Files where scorer and reviewer agree on keep vs not-keep | 40 of 49 |
+| Spearman rank correlation, scorer vs reviewer rating | 0.65 |
+| Files where scorer and reviewer agree on flagged vs clean | 41 of 49 |
 | Files the scorer flags that a reviewer would keep | 0 |
-| Exact verdict match | 34 of 49 |
+| Exact finding match | 35 of 49 |
 
 The nine misses are all in the same direction: the scorer says keep, the
 reviewer wants a refactor. They need reasoning a regex cannot do, such as
@@ -141,10 +149,10 @@ Playwright, in five assertion dialects.
 | Measure | Value |
 |---|---:|
 | Files | 2,114 |
-| Median score / p90 / p99 | 4.1 / 11.6 / 22 |
-| Flagged (anything but keep) | 48 (2.3%) |
-| `delete-or-rewrite` | 4, all docs-conformance tests that grep repo markdown |
-| `delete-duplicate` | 14: fastify's webpack/esbuild bundler tests, axios esm/cjs smoke pairs, zod v3/v4 pairs |
+| Median score / p90 | 4 / 12.5 |
+| Flagged (anything but clean) | 50 (2.4%) |
+| `restates-implementation` | 4, all docs-conformance tests that grep repo markdown |
+| `duplicate` | 14: fastify's webpack/esbuild bundler tests, axios esm/cjs smoke pairs, zod v3/v4 pairs |
 
 Nothing in a well-known suite scores as tautology except the tests that really
 do assert on repo text. The corpus caught six blind spots the first 27 repos
@@ -187,14 +195,14 @@ mutants.
 
 | Measure | Value |
 |---|---:|
-| Spearman, uselessness score vs mutant survival in own source | 0.82 |
-| Same, inside the 18 keep files only | 0.64 |
+| Spearman, uselessness score vs mutant survival in own source | 0.80 |
+| Same, inside the 19 clean files only | 0.64 |
 | Same, inside the 11 flagged files only | 0.77 |
 | Same, with the cost component removed from the score | 0.71 |
-| Mean kill rate, `delete-or-rewrite` (4 files) | 15% |
+| Mean kill rate, `restates-implementation` (4 files) | 15% |
 | Mean kill rate, `review` (4 files) | 45% |
-| Mean kill rate, `rewrite-as-contract` (3 files) | 50% |
-| Mean kill rate, `keep` (18 files) | 72% |
+| Mean kill rate, `transcribes-fixture` (2 files) | 68% |
+| Mean kill rate, `clean` (19 files) | 70% |
 
 The top-scoring file, `DeckGlobe.test.ts`, kills 4 of the 65 mutants in
 `DeckGlobe.ts`. The reviewers had rated it 85 and the scorer 59; both were
@@ -230,6 +238,37 @@ the JSON reporter, then
 `node docs/mutation-join.mjs reports/mutation/mutation.json useless.json <repo root>`
 where `useless.json` is the scorer's `--json` output.
 
+#### What an independent code review changed
+
+A reviewer read the first version as shipped and pushed back on five things.
+Three were already fixed by the corpus work; two were real and are fixed here,
+along with a naming change:
+
+- **Churn was treated as evidence of transcription.** It is not. Against the
+  mutation data, the lockstep component correlates **-0.30** with mutant
+  survival: tests edited alongside their source kill *more* mutants, not
+  fewer. Against the reviewer set it correlated 0.11, which is nothing. The
+  signal is removed; churn is still reported in `--json` as data.
+- **Any git shell-out forced the worst finding.** Installer and scaffolding
+  tests legitimately drive a `git` shim, which is a false positive the docs
+  admitted but the rules did not handle. Git usage now feeds tautology like
+  any other signal and decides nothing on its own; the regex also no longer
+  fires on a branch name in a string. Five mere-earth files moved to `clean`.
+- **Repo-source greps were judged on an absolute count.** Five greps in a
+  forty-assertion behavioural test is not a source grep. The trigger now needs
+  those assertions to be at least half the file. The architecture tests it was
+  meant to catch still trigger it, at 62 of 65 assertions and 42 of 43.
+- **The labels named actions the tool cannot justify.** `delete-or-rewrite`
+  told a reader to delete a file on regex evidence. Findings now name the
+  observation, and the recommended action is a separate, clearly human column.
+- Already fixed before the review landed: python detection needing a real
+  spawn, `toHaveBeenCalledWith` no longer treated as a bare call, and the
+  discovery gap that missed `docs-worker/index.test.mjs`.
+
+Removing lockstep and softening the two hard rules left accuracy unchanged:
+reviewer correlation 0.67 → 0.65, mutation correlation 0.82 → 0.80, and the
+same 41 of 49 flagged-vs-clean agreement.
+
 Things that were wrong in the first cut and are now handled:
 
 - A 28-file node:test suite scored zero because only `expect(` was counted.
@@ -250,7 +289,7 @@ Things that were wrong in the first cut and are now handled:
 - Copy-pasted test files across packages went unnoticed; seven exact or
   near-exact copies turned up in three repos.
 - A test next to a 3-line `export * from` barrel was measured against the
-  barrel, so the refactor-source rule never fired on a 2,266-line test of a
+  barrel, so the oversized-unit rule never fired on a 2,266-line test of a
   4,123-line module. Barrels are now followed.
 - A reset harness pasted into 44 files was invisible because each copy was a
   third of its file, below the similarity threshold. Repeated blocks are now
@@ -259,11 +298,11 @@ Things that were wrong in the first cut and are now handled:
 ## Library
 
 ```ts
-import { rank, analyzeTest, score, WEIGHTS } from 'useless-tests';
+import { rank, analyzeTest, score, WEIGHTS, FINDING_GUIDANCE } from 'useless-tests';
 
 const rows = rank({ root: '/path/to/repo' });      // Scored[], most useless first
 const signals = analyzeTest({ file, text, source, sourceText, churn, timing });
-const scored = score(signals);                      // { score, components, reasons, verdict }
+const scored = score(signals);                      // { score, components, reasons, finding }
 ```
 
 `analyzeTest` and `score` are pure; only `rank`/`collectRepo` touch git and the
@@ -289,7 +328,7 @@ pnpm dev --root ../some-repo
 
 The scorer's own tests are contract tests over synthetic inputs and a throwaway
 git repo. Running `useless` on this repo is a live demo of its blind spot: the
-signals test is flagged `delete-or-rewrite` because its inputs are the patterns
+signals test is flagged `restates-implementation` because its inputs are the patterns
 it detects, and the repo test shells out to real `git` because git plumbing is
 the unit under test. The score test, which feeds plain numbers in, scores under
 one.
