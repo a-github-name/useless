@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { benchTable, runBench } from './bench.js';
 import { rank } from './index.js';
 import { joinMutation, loadMutationReport } from './mutation.js';
-import { DEFAULT_PATTERNS, loadTimings } from './repo.js';
+import { DEFAULT_PATTERNS, loadTimings, unsupportedStandaloneFiles } from './repo.js';
 import { flattenUnits, markdownTable, summarize, summaryLines, unitTable } from './report.js';
 
 const HELP = `useless — rank test files by how useless they are
@@ -20,12 +20,14 @@ Scan options:
   --top <n>           Rows to print (default: 40; 0 = all)
   --min-score <n>     Only print rows scoring at least n
   --timings <file>    vitest/jest JSON report (--reporter=json --outputFile=<file>)
-                      or swift test xunit XML (--xunit-output <file>)
+                      Node JUnit XML (--test-reporter=junit), or Swift xunit XML
                       so runtime is folded into the cost signal
   --mutation <file>   Stryker mutation.json (coverageAnalysis perTest, disableBail):
                       per-file and per-test kill rates and redundancy are joined in
   --pattern <glob>    git ls-files pattern for test files; repeatable
                       (default: ${DEFAULT_PATTERNS.join(' ')})
+  --standalone        Include JS/TS scripts with no test() blocks from explicit
+                      --pattern globs; imported checks still need a manual read
   --json <file>       Write every scored row (all signals, all tests) to a JSON file
   --format <md|json>  Print a markdown table (default) or JSON to stdout
   --no-ast            Skip the tree-sitter parse; regex-only analysis
@@ -49,6 +51,7 @@ async function scan(args: string[]): Promise<void> {
       timings: { type: 'string' },
       mutation: { type: 'string' },
       pattern: { type: 'string', multiple: true },
+      standalone: { type: 'boolean', default: false },
       json: { type: 'string' },
       format: { type: 'string', default: 'md' },
       'no-ast': { type: 'boolean', default: false },
@@ -64,12 +67,20 @@ async function scan(args: string[]): Promise<void> {
   const top = Number(values.top);
   const minScore = values['min-score'] === undefined ? 0 : Number(values['min-score']);
   const patterns = values.pattern && values.pattern.length > 0 ? values.pattern : undefined;
+  if (values.standalone && patterns) {
+    const unsupported = unsupportedStandaloneFiles(root, patterns);
+    if (unsupported.length)
+      process.stderr.write(
+        `useless: skipped ${unsupported.length} unsupported file(s): ${unsupported.join(', ')}\n`,
+      );
+  }
 
   const scored = await rank({
     root,
     ...(patterns ? { patterns } : {}),
     timings: loadTimings(values.timings, root),
     ast: !values['no-ast'],
+    standalone: values.standalone,
   });
   const rows = values.mutation
     ? joinMutation(scored, loadMutationReport(values.mutation), root).rows

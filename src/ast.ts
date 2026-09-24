@@ -19,6 +19,8 @@ export type Unit = {
   endIndex: number;
   /** `skip`, `only`, `todo`, `each`, ... */
   modifiers: string[];
+  /** Cases registered by literal tables and loops; null when registration depends on runtime data. */
+  staticCases: number | null;
 };
 
 export type LiteralKind = 'string' | 'regex' | 'number' | 'array' | 'object' | 'bool' | 'null';
@@ -316,6 +318,53 @@ function suiteTitles(node: Node): string[] {
   return titles;
 }
 
+/** Count only literal array entries. Evaluating an identifier or a spread would execute user code. */
+function literalArrayLength(node: Node | null): number | null {
+  let value = node;
+  while (
+    value &&
+    (value.type === 'as_expression' ||
+      value.type === 'satisfies_expression' ||
+      value.type === 'parenthesized_expression' ||
+      value.type === 'non_null_expression')
+  )
+    value = value.namedChildren[0] ?? null;
+  if (value?.type !== 'array') return null;
+  if (value.namedChildren.some((entry) => entry.type === 'spread_element')) return null;
+  return value.namedChildren.length;
+}
+
+/** Static registration count for a call site, without evaluating test modules. */
+function staticCases(call: Node): number | null {
+  let cases = 1;
+  const fn = call.childForFieldName('function');
+  if (fn?.type === 'call_expression') {
+    const inner = fn.childForFieldName('function');
+    const chain = inner ? memberChain(inner) : null;
+    if (chain?.includes('each')) {
+      const length = literalArrayLength(
+        fn.childForFieldName('arguments')?.namedChildren[0] ?? null,
+      );
+      if (length === null) return null;
+      cases *= length;
+    }
+  }
+  let parent = call.parent;
+  while (parent) {
+    if (parent.type === 'for_in_statement' || parent.type === 'for_statement') {
+      if (parent.type !== 'for_in_statement' || !parent.children.some((c) => c.type === 'of'))
+        return null;
+      const length = literalArrayLength(parent.childForFieldName('right'));
+      if (length === null) return null;
+      cases *= length;
+    }
+    // A registration inside a conditional cannot be counted from syntax alone.
+    if (parent.type === 'if_statement' || parent.type === 'switch_statement') return null;
+    parent = parent.parent;
+  }
+  return cases;
+}
+
 /**
  * Parse one file and extract the facts the analyser consumes. Returns null
  * for languages without a grammar, or before `initAst()` has run.
@@ -366,6 +415,7 @@ export function extractFacts(file: string, text: string): Facts | null {
           startIndex: call.startIndex,
           endIndex: call.endIndex,
           modifiers: title.modifiers,
+          staticCases: staticCases(call),
         });
         continue;
       }

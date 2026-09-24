@@ -40,6 +40,11 @@ try {
     join(fixture, 'src/math.test.ts'),
     "import { expect, test } from 'vitest';\nimport { add } from './math';\ntest('adds', () => expect(add(1, 2)).toBe(3));\n",
   );
+  mkdirSync(join(fixture, 'scripts'), { recursive: true });
+  writeFileSync(
+    join(fixture, 'scripts/verify-result.mjs'),
+    "import assert from 'node:assert/strict';\nassert.equal(3, 3);\n",
+  );
   run('git', ['init', '-q'], fixture);
   run('git', ['add', '.'], fixture);
   run(
@@ -61,9 +66,40 @@ try {
   if (scan.rows?.length !== 1 || scan.rows[0]?.file !== 'src/math.test.ts') {
     throw new Error('installed CLI did not scan the fixture');
   }
+  const scripts = JSON.parse(
+    run(
+      bin,
+      ['--root', fixture, '--standalone', '--pattern', 'scripts/verify-*.mjs', '--format', 'json'],
+      fixture,
+    ),
+  );
+  if (
+    scripts.rows?.length !== 1 ||
+    !scripts.rows[0]?.standalone ||
+    scripts.rows[0]?.expects !== 1
+  ) {
+    throw new Error('installed CLI did not score the standalone verifier');
+  }
+  const junit = join(temp, 'node-junit.xml');
+  writeFileSync(
+    junit,
+    `<testsuites><testcase name="adds" classname="test" file="${join(fixture, 'src/math.test.ts')}" time="20"/></testsuites>`,
+  );
+  const timed = JSON.parse(
+    run(bin, ['--root', fixture, '--timings', junit, '--format', 'json'], fixture),
+  );
+  if (timed.rows?.[0]?.durationMs !== 20_000) {
+    throw new Error('installed CLI did not join Node JUnit case time');
+  }
   const modulePath = join(prefix, 'node_modules/useless-tests/dist/index.js');
   const library = await import(pathToFileURL(modulePath).href);
-  for (const name of ['joinMutation', 'readFiles', 'runBench', 'spearman']) {
+  for (const name of [
+    'joinMutation',
+    'parseNodeJunitTimings',
+    'readFiles',
+    'runBench',
+    'spearman',
+  ]) {
     if (typeof library[name] !== 'function') throw new Error(`package root is missing ${name}`);
   }
   const rows = await library.rank({ root: fixture });

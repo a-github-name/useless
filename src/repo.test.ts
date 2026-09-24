@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,11 +12,15 @@ import {
   findSharedBlocks,
   findSimilar,
   listTestFiles,
+  loadTimings,
+  parseNodeJunitTimings,
   parseTimings,
   parseXunitTimings,
   resolveModuleText,
   siblingSource,
+  unsupportedStandaloneFiles,
 } from './repo.js';
+import { markdownTable, summarize, summaryLines } from './report.js';
 
 function git(root: string, ...args: string[]): void {
   execFileSync('git', args, {
@@ -93,6 +97,56 @@ describe('repo plumbing', () => {
     expect(files).not.toContain('test/support.js');
     expect(files).toContain('test/app.js');
     expect(files).toContain('src/__tests__/util.js');
+  });
+
+  it('includes explicit standalone JS/TS verifiers and flags opaque checks for review', async () => {
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    writeFileSync(
+      join(root, 'scripts/verify-local.mjs'),
+      "import assert from 'node:assert/strict';\nassert.equal(2, 2);\n",
+    );
+    writeFileSync(
+      join(root, 'scripts/verify-opaque.ts'),
+      "import { verify } from './helper';\nawait verify();\n",
+    );
+    writeFileSync(join(root, 'scripts/verify-python.py'), 'assert True\n');
+    git(root, 'add', 'scripts');
+    const patterns = ['scripts/verify-*'];
+    expect(unsupportedStandaloneFiles(root, patterns)).toEqual(['scripts/verify-python.py']);
+    expect(listTestFiles(root, patterns)).toEqual([
+      'scripts/verify-local.mjs',
+      'scripts/verify-opaque.ts',
+    ]);
+    expect((await rank({ root, patterns })).map((row) => row.file)).toEqual([]);
+    const rows = await rank({ root, patterns, standalone: true });
+    expect(rows.map((row) => row.file).sort()).toEqual([
+      'scripts/verify-local.mjs',
+      'scripts/verify-opaque.ts',
+    ]);
+    expect(rows.find((row) => row.file.endsWith('local.mjs'))).toMatchObject({
+      standalone: true,
+      tests: 0,
+      expects: 1,
+    });
+    expect(rows.find((row) => row.file.endsWith('opaque.ts'))).toMatchObject({
+      standalone: true,
+      finding: 'review',
+      expects: 0,
+    });
+    expect(summarize(rows).standaloneFiles).toBe(2);
+    expect(summaryLines(summarize(rows))[0]).toContain('2 standalone JS/TS scripts');
+    expect(markdownTable(rows)).toContain('| kind |');
+    await expect(rank({ root, standalone: true })).rejects.toThrow('explicit patterns');
+  });
+
+  it('uses Node JUnit case time as a file cost when supplied', async () => {
+    const xml = `<testsuites><testcase name="adds" classname="test" file="${realpathSync(join(root, 'src/add.test.ts'))}" time="20"/></testsuites>`;
+    const report = join(root, 'node-junit.xml');
+    writeFileSync(report, xml);
+    const rows = await rank({ root, timings: loadTimings(report, root) });
+    const add = rows.find((row) => row.file === 'src/add.test.ts');
+    expect(add?.durationMs).toBe(20_000);
+    expect(add?.components.cost).toBeGreaterThan(0.3);
   });
 
   it('finds the co-located source by name, or one folder up from a tests directory', () => {
@@ -307,6 +361,24 @@ describe('parseXunitTimings', () => {
     expect(timings.get('ATests')).toEqual({ durationMs: 1000, failed: false });
     expect(timings.get('BTests')).toEqual({ durationMs: 2000, failed: true });
     expect(timings.size).toBe(2);
+  });
+});
+
+describe('parseNodeJunitTimings', () => {
+  it('sums case times by file and keeps failures', () => {
+    const xml = [
+      '<testsuites>',
+      '  <testcase name="first" classname="test" file="/repo/tests/a.test.ts" time="0.125"/>',
+      '  <testcase name="second" classname="test" file="/repo/tests/a.test.ts" time="0.375"><failure>bad</failure></testcase>',
+      '  <testcase name="other" classname="test" file="/repo/tests/b.test.ts" time="1.5"/>',
+      '</testsuites>',
+    ].join('\n');
+    const timings = parseNodeJunitTimings(xml, '/repo');
+    expect(timings.get('tests/a.test.ts')).toEqual({ durationMs: 500, failed: true });
+    expect(timings.get('tests/b.test.ts')).toEqual({ durationMs: 1500, failed: false });
+    const report = join(tmpdir(), `useless-node-junit-${process.pid}.xml`);
+    writeFileSync(report, xml);
+    expect(loadTimings(report, '/repo').get('tests/a.test.ts')?.durationMs).toBe(500);
   });
 });
 

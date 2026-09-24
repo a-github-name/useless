@@ -70,6 +70,8 @@ export type Signals = {
   coChangeCommits: number;
   durationMs: number | null;
   failed: boolean;
+  /** Explicitly included script without test registration calls. */
+  standalone?: boolean;
   /** Per-test rows, when the file was parsed. */
   units?: UnitSignals[];
 };
@@ -104,6 +106,8 @@ export type UnitSignals = Omit<Signals, 'units'> & {
   fullName: string;
   line: number;
   endLine: number;
+  /** Cases represented by this registration site; null when runtime data determines the count. */
+  staticCases?: number | null;
 };
 
 export type Verdict = {

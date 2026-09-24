@@ -41,6 +41,13 @@ npx useless-tests --timings .vitest.json --top 40 --json useless.json
 npx useless-tests --per-test --top 40                       # individual test blocks
 ```
 
+For a Node test runner, create a JUnit report with
+`node --test --test-reporter=junit --test-reporter-destination=.node-junit.xml`
+and pass it with `--timings`. The reported file duration is the sum of case
+times, not necessarily file wall time. To review standalone JS/TS verifier
+scripts, use explicit `--pattern` globs with `--standalone`; read any imported
+checks and exit conditions yourself. Python verifiers are outside this scan.
+
 If a Stryker report exists (or the suite is small enough to make one:
 `coverageAnalysis: "perTest"`, `disableBail: true`, json reporter), pass it with
 `--mutation reports/mutation/mutation.json`. Every file and test then carries
@@ -58,10 +65,13 @@ minutes on a small package; pass it with `--mutation` like any other.
 
 If it is not installed, `pnpm dlx useless-tests` works.
 
-Read the three summary lines and the table. The third line ends with "tests
+Read the summary lines and the table. The findings line ends with "tests
 flagged on their own: N of T": the parse scores every `it`/`test` block
 separately, and a clean file can hide a handful of tautological tests.
 `--per-test` ranks those blocks; the JSON carries them under `units`.
+Registration sites inside literal loops and `test.each` tables carry a
+`staticCases` count. A null count means runtime data determines repetition;
+only a runner report establishes how many cases executed.
 
 The second line reports duplicated
 setup ("N lines of setup duplicated across M files") when a block is pasted
