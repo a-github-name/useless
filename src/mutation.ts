@@ -91,7 +91,6 @@ export function reduceReport(report: MutationReport): MutationReport {
   }
   return {
     schemaVersion: report.schemaVersion ?? '1.0',
-    ...(report.projectRoot ? { projectRoot: report.projectRoot } : {}),
     files,
     testFiles,
   };

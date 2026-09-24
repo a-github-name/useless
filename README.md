@@ -34,10 +34,10 @@ Fold runtime into the score by handing it a JSON report first:
 
 ```sh
 npx vitest run --reporter=json --outputFile=.vitest.json
-npx useless --timings .vitest.json
+npx useless-tests --timings .vitest.json
 
 swift test --parallel --xunit-output .xunit.xml     # Swift packages
-npx useless --timings .xunit.xml
+npx useless-tests --timings .xunit.xml
 ```
 
 ## What comes out
@@ -51,7 +51,6 @@ restates-implementation: 9 · external-dependency: 1 · oversized-unit: 9 · tra
 |---:|---|---|---:|---:|---:|---:|---:|---|
 | 64.8 | restates-implementation | `app/src/components/DeckGlobe.test.ts` | 99 | 1 | 4 | 100 | 6 | 100% of expects are "mock was called"; 100% weak assertions; 6.0 mocks per test; 99 lines per test |
 | 51.5 | restates-implementation | `app/src/components/Globe.test.ts` | 141 | 1 | 5 | 60 | 31 | 80% of expects are "mock was called"; 60% weak assertions; 31.0 mocks per test; 141 lines per test |
-| 49.6 | restates-implementation | `app/src/analyst-missions/usace-chimney-rock/map-ownership.test.ts` | 125 | 7 | 39 | 0 | 0 | asserts on source text ×12; greps 29 assertions over repo file contents; asserts files stay deleted |
 ```
 
 The score is a triage order and the finding is an observation; neither is a
@@ -221,24 +220,24 @@ reading the file. The last column is a prompt for that reading.
 
 The rules were tuned by running the scorer over 27 repos (1,548 test files,
 about 300k lines: SvelteKit apps, Cloudflare Workers, CLIs, a Preact globe
-renderer, node:test suites), then having five independent reviewers close-read
-49 files across five of those repos without seeing the scores. Each reviewer
+renderer, node:test suites), then having five independent model readers close-read
+49 files across five of those repos without seeing the scores. Each reader
 named a real bug that would fail the test, a harmless refactor that would fail
 it, and gave a 0–100 uselessness rating and a verdict.
 
 | Measure | Value |
 |---|---:|
-| Spearman rank correlation, scorer vs reviewer rating | 0.65 |
-| Files where scorer and reviewer agree on flagged vs clean | 41 of 49 |
-| Files the scorer flags that a reviewer would keep | 0 |
+| Spearman rank correlation, scorer vs model reader rating | 0.65 |
+| Files where scorer and model reader agree on flagged vs clean | 41 of 49 |
+| Files the scorer flags that a model reader would keep | 0 |
 | Exact finding match | 35 of 49 |
 
-The nine misses are all in the same direction: the scorer says keep, the
+The eight disagreements are all in the same direction: the scorer says keep, the
 reviewer wants a refactor. They need reasoning a regex cannot do, such as
 noticing that a route test only passes because a non-injected helper swallows
 an error, or that a dispatch table in the source is being transcribed row by
 row. Tautology alone correlates at 0.65 with the reviewers; it is the signal
-that matters most, which is why it carries a third of the weight.
+that matters most, which is why it carries 40% of the weight.
 
 #### Public corpus
 
@@ -284,7 +283,7 @@ intent.
 
 #### Mutation testing
 
-Reviewer opinion is still opinion. Mutation testing measures which simulated
+Model reader ratings are still judgments. Mutation testing measures which simulated
 bugs a test catches in the selected source: mutate it, then see which tests
 fail. Stryker was run with per-test coverage and bail disabled, so every
 covering test runs
@@ -526,9 +525,9 @@ the close-read rating over the same files.
 
 What these seven repos say, read honestly:
 
-- **None of them has a tail, and the score knows it.** All seven are healthy
-  suites by the rules; hono's 51 files with own-source mutants are all `clean` and kill
-  79% of their mutants. Correlations near zero are the expected result. The
+- **There is no clear file-level tail in these cases.** Hono's 51 files with
+  own-source mutants are all `clean` and kill 79% of their mutants. Correlations
+  near zero are the expected result. The
   mere-earth run in the previous section, on a suite with a tail, gave 0.80;
   that report was not kept, and re-running it is the next thing to add here.
 - **The three hono tests the rules flag on their own kill 15% of what they
@@ -555,7 +554,7 @@ What these seven repos say, read honestly:
   level too.** zod's 59 units with that finding kill 44% of what they cover
   against 35% for its clean units. The finding stays, and the reader should
   keep treating it as a bill rather than a gap.
-- **96% of test blocks match the report by title.** immer is the exception
+- **92% of test blocks match the report by title or line.** immer is the exception
   (144 of 522): its suites build titles from `describe.each` tables, which
   the parse cannot resolve without running the code.
 
@@ -634,5 +633,5 @@ against local checkouts of the corpus repos.
 ## Origin
 
 Calibrated on a 533-file, 122k-line Vitest and Playwright suite, where three
-independent close-reads of the top-scoring files agreed with the ranking. The
+independent model close-reads of the top-scoring files agreed with the ranking. The
 weights are opinions. Change them in `src/score.ts`.

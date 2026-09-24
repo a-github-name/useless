@@ -19,41 +19,28 @@ Review `npm pack --dry-run --ignore-scripts` and confirm the version in
 scan; `test:pack` installs the tarball in a temporary directory and scans a
 fixture repo through both the CLI and library API.
 
-## Bootstrap the first npm release
+## First release record
 
-npm requires the package to exist before its trusted publisher can be
-configured. The GitHub workflow therefore skips publication while
-`useless-tests` is absent from npm. After the release commit has passed CI and
-landed on `main`, an npm maintainer signs in with two-factor authentication
-and publishes that commit's tested tarball:
+Version `0.2.0` was published from commit
+`e4d0aabbb0f85c602cd66fc97545734c52159709` after CI and a tarball
+installation test. npm requires the package to exist before its trusted
+publisher can be configured, so this first version used an authenticated npm
+publish. The [GitHub release](https://github.com/a-github-name/useless/releases/tag/v0.2.0)
+includes the tarball and its SHA-256 checksum. The registry tarball matched
+the tested tarball byte for byte.
 
-```sh
-npm login
-npm whoami
-pnpm install --frozen-lockfile
-pnpm check
-pnpm check:package
-npm pack --ignore-scripts
-node scripts/test-pack.mjs --tarball useless-tests-0.2.0.tgz
-npm publish ./useless-tests-0.2.0.tgz --access public --ignore-scripts
-```
+## Publish later releases
 
-Use the version from `package.json` in the two tarball commands. After npm
-lists the package, verify its version and install the public package in a
-fresh directory before announcing the release.
-
-## Configure later releases
-
-In the npm package settings, configure GitHub Actions as a trusted publisher:
+The npm package has a GitHub Actions trusted publisher configured with:
 
 - Owner: `a-github-name`
 - Repository: `useless`
 - Workflow filename: `publish.yml`
 - Environment: `npm`
 
-The repository's `publish.yml` checks for a version absent from npm, builds
-and smoke-tests a tarball, publishes that same tarball through npm OIDC, and
-creates a matching GitHub release. It needs no npm token. A private GitHub
-repository can publish this way, but npm does not generate public source
-provenance for a private repository. See the
+Increase the version in `package.json` and merge the release commit into
+`main`. The repository's `publish.yml` checks for a version absent from npm,
+builds and smoke-tests a tarball, publishes that same tarball through npm OIDC, and
+creates a matching GitHub release. It needs no npm token. This workflow was
+configured after `0.2.0`; its first OIDC publication has not yet run. See the
 [npm trusted publishing guide](https://docs.npmjs.com/trusted-publishers/).

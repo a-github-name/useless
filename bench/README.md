@@ -12,8 +12,10 @@ useless bench --json bench/results.json
 ```
 
 Roots in the manifest are relative to `USELESS_CORPUS` when it is set,
-otherwise to this directory. Each case records the commit the report was made
-from; check the repo out at that commit before comparing numbers.
+otherwise to this directory. Check out each case, including the public
+`mere-run` repo, at the commit recorded in `bench.json` before comparing
+numbers. These stored reports use relative source and test paths, so they work
+with your checkout location.
 
 ## Adding a repo
 

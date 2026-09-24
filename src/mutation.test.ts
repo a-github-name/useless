@@ -162,6 +162,7 @@ describe('joinMutation', () => {
         },
       },
     });
+    expect(reduced.projectRoot).toBeUndefined();
     expect(reduced.files['src/a.ts']?.mutants[0]).toEqual({
       id: '1',
       status: 'Killed',
