@@ -1,10 +1,17 @@
 {
   "name": "useless-tests",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Rank a repo's test files by how useless they are: cost carried versus regressions they can plausibly catch.",
   "type": "module",
   "license": "MIT",
   "author": "Kyle McCullough",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a-github-name/useless.git"
+  },
+  "bugs": {
+    "url": "https://github.com/a-github-name/useless/issues"
+  },
   "bin": {
     "useless": "./dist/cli.js"
   },
@@ -16,11 +23,16 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "skills", "README.md"],
+  "files": ["dist", "grammars", "skills", "README.md", "THIRD_PARTY_NOTICES.md"],
   "engines": {
     "node": ">=20"
   },
+  "packageManager": "pnpm@10.34.5",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "prepack": "pnpm build",
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -28,9 +40,21 @@
     "format": "biome format --write .",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "check:package": "node scripts/check-package.mjs",
+    "test:pack": "node scripts/test-pack.mjs",
     "prepublishOnly": "pnpm check"
   },
-  "keywords": ["vitest", "jest", "playwright", "test-quality", "test-audit", "code-quality", "cli"],
+  "keywords": [
+    "vitest",
+    "jest",
+    "playwright",
+    "xctest",
+    "swift-testing",
+    "test-quality",
+    "test-audit",
+    "code-quality",
+    "cli"
+  ],
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
     "@types/node": "^24.0.0",
@@ -40,5 +64,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+  },
+  "dependencies": {
+    "web-tree-sitter": "0.22.6"
   }
 }

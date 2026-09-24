@@ -1,4 +1,4 @@
-import type { Finding, Scored, SignalName, Signals } from './types.js';
+import type { Finding, Scored, ScoredUnit, SignalName, Signals, Verdict } from './types.js';
 
 /** Weights sum to 100 so a score reads as "% of maximum plausible uselessness". */
 export const WEIGHTS: Record<SignalName, number> = {
@@ -23,12 +23,12 @@ export const FINDING_ORDER: Finding[] = [
 
 /** What each finding usually means to do. The reader decides; this is a prompt, not a verdict. */
 export const FINDING_GUIDANCE: Record<Finding, string> = {
-  duplicate: 'read both files together; fold or share',
+  duplicate: 'read both files together; check whether each protects a distinct contract',
   'restates-implementation':
-    'cannot fail on a real bug as written; replace with a behavioural test or a lint rule',
-  'external-dependency': 'keep, but out of the unit suite',
-  'oversized-unit': 'the cost is the module, not the test; split along its seams',
-  'transcribes-fixture': 'state the invariant instead of the current output',
+    'check whether these assertions protect an independent contract or only the current implementation',
+  'external-dependency': 'check the contract and whether the unit suite is the right place for it',
+  'oversized-unit': 'inspect the module and test boundaries before splitting either',
+  'transcribes-fixture': 'check whether exact output is the contract or incidental fixture data',
   review: 'worth a human read; the reasons say why',
   clean: 'no signal worth acting on',
 };
@@ -38,9 +38,23 @@ const pct = (value: number): string => `${Math.round(value * 100)}%`;
 
 /**
  * Map raw signals to [0, 1] components, weight them, and attach a finding
- * plus the human-readable reasons behind it.
+ * plus the human-readable reasons behind it. Per-test units are scored with
+ * the same rules; a file whose units restate the implementation says so.
  */
 export function score(signals: Signals): Scored {
+  const { units: rawUnits, ...file } = signals;
+  const verdict = evaluate(file);
+  const units: ScoredUnit[] = (rawUnits ?? []).map((u) => ({ ...u, ...evaluate(u) }));
+  const restating = units.filter((u) => u.finding === 'restates-implementation').length;
+  let finding = verdict.finding;
+  if (restating > 0 && finding !== 'restates-implementation' && finding !== 'duplicate') {
+    verdict.reasons.push(`${restating} of ${units.length} tests restate the implementation`);
+    if (restating >= 3 && finding === 'clean') finding = 'review';
+  }
+  return { ...file, ...verdict, finding, units };
+}
+
+function evaluate(signals: Omit<Signals, 'units'>): Verdict {
   const reasons: string[] = [];
   const tests = Math.max(1, signals.tests);
   const expects = Math.max(1, signals.expects);
@@ -148,17 +162,25 @@ export function score(signals: Signals): Scored {
 
   // 6. Environment coupling: external interpreters, real clocks, this machine.
   const environment = clamp(
-    signals.pythonShellouts / 2 + signals.realWaits / 3 + signals.machinePaths / 2,
+    signals.pythonShellouts / 2 +
+      signals.realWaits / 3 +
+      signals.machinePaths / 2 +
+      signals.dependencyGates / tests,
   );
   if (signals.pythonShellouts > 0) reasons.push('shells out to python/uv');
   if (signals.realWaits > 0) reasons.push(`${signals.realWaits} real-clock wait(s)`);
   if (signals.machinePaths > 0) reasons.push('reads the real home directory');
+  if (signals.dependencyGates > 0)
+    reasons.push(
+      `${signals.dependencyGates} test(s) run only with a GPU, a binary, a model, or an env opt-in`,
+    );
 
   // 7. Skipped, gated, or focused tests are cost with no guaranteed signal.
   const skipped = clamp((signals.skipped + signals.gatedSuites + signals.focused * 2) / tests);
   if (signals.skipped > 0) reasons.push(`${signals.skipped} skipped`);
   if (signals.machineGates > 0) reasons.push('suite gated on this machine');
-  else if (signals.gatedSuites > 0) reasons.push(`${signals.gatedSuites} conditional suite(s)`);
+  else if (signals.gatedSuites > signals.dependencyGates)
+    reasons.push(`${signals.gatedSuites - signals.dependencyGates} conditional suite(s)`);
   if (signals.focused > 0) reasons.push(`.only left in (${signals.focused})`);
 
   const components: Record<SignalName, number> = {
@@ -185,7 +207,8 @@ export function score(signals: Signals): Scored {
     (signals.repoTextAsserts >= 5 && signals.repoTextAsserts / expects >= 0.5)
   )
     finding = 'restates-implementation';
-  else if (signals.pythonShellouts > 0) finding = 'external-dependency';
+  else if (signals.pythonShellouts > 0 || signals.dependencyGates >= Math.ceil(tests / 2))
+    finding = 'external-dependency';
   else if (
     signals.sourceLines !== null &&
     signals.sourceLines > 1500 &&
@@ -211,5 +234,5 @@ export function score(signals: Signals): Scored {
   )
     finding = 'review';
 
-  return { ...signals, score: Math.round(total * 10) / 10, components, reasons, finding };
+  return { score: Math.round(total * 10) / 10, components, reasons, finding };
 }

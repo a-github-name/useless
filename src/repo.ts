@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
-import { TEST_FILE_RE, analyzeTest } from './signals.js';
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { extractFacts, initAst } from './ast.js';
+import { TEST_FILE_RE, analyzeTest, analyzeUnits } from './signals.js';
+import { analyzeSwiftUnits } from './swift.js';
 import type { Churn, Signals, Timing } from './types.js';
 
 export const DEFAULT_PATTERNS = [
@@ -20,17 +22,20 @@ export const DEFAULT_PATTERNS = [
   'tests/*',
   '*/test/*',
   '*/tests/*',
+  '*Tests/*',
+  '*Tests.swift',
+  '*Test.swift',
 ];
 
 /** Paths under a test directory that are helpers, fixtures, or generated output rather than tests. */
 const NOT_A_TEST_RE =
-  /(^|\/)(fixtures?|helpers?|utils?|mocks?|__mocks__|__snapshots__|snapshots?|support|setup|stubs?|data|assets|__fixtures__)(\/|$)|\.(d\.ts|snap|json|md|html|css|map)$/;
+  /(^|\/)(fixtures?|helpers?|utils?|mocks?|__mocks__|__snapshots__|snapshots?|support|setup|stubs?|data|assets|resources?|__fixtures__)(\/|$)|\.(d\.ts|snap|json|md|html|css|map)$/i;
 
 function git(root: string, args: string[]): string {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 });
 }
 
-const CODE_RE = /\.[cm]?[jt]sx?$/;
+const CODE_RE = /\.[cm]?[jt]sx?$|\.swift$/;
 
 /**
  * Tracked test files, relative to `root`, via `git ls-files`. Files under a
@@ -52,14 +57,66 @@ export function listTestFiles(root: string, patterns = DEFAULT_PATTERNS): string
 
 const SOURCE_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 
-/** `foo.test.ts` -> `foo.ts` (or .tsx/.js/...) in the same directory, if present. */
-export function siblingSource(root: string, testFile: string): string | null {
+/** Non-test source files keyed by basename, for languages whose tests live in a separate tree. */
+export type SourceIndex = Map<string, string[]>;
+
+/** Paths under a `*Tests/` directory, or named `*Tests.swift`, are tests or their helpers. */
+const SWIFT_TEST_PATH_RE = /(^|\/)[^/]*Tests?\/|Tests?\.swift$/;
+
+export function buildSourceIndex(root: string): SourceIndex {
+  const index: SourceIndex = new Map();
+  for (const raw of git(root, ['ls-files', '--', '*.swift']).split('\n')) {
+    const file = raw.trim();
+    if (!file || SWIFT_TEST_PATH_RE.test(file)) continue;
+    const name = basename(file);
+    let list = index.get(name);
+    if (!list) {
+      list = [];
+      index.set(name, list);
+    }
+    list.push(file);
+  }
+  return index;
+}
+
+/**
+ * SwiftPM keeps tests in `Tests/FooTests/BarTests.swift` and sources in
+ * `Sources/Foo/**\/Bar.swift`, so the sibling is found by name. When several
+ * modules define the name, prefer the one matching the test target. A test
+ * named for a facet of its subject (`FooCommandParsingTests`) falls back to
+ * the name with its last word removed.
+ */
+function swiftSibling(testFile: string, index: SourceIndex): string | null {
+  const base = basename(testFile).replace(/Tests?\.swift$/, '');
+  const module = basename(dirname(testFile)).replace(/Tests$/, '');
+  const pick = (name: string): string | null => {
+    const candidates = index.get(`${name}.swift`);
+    if (!candidates?.length) return null;
+    if (candidates.length === 1) return candidates[0] ?? null;
+    return candidates.find((c) => c.includes(`/${module}/`)) ?? candidates[0] ?? null;
+  };
+  const direct = pick(base);
+  if (direct) return direct;
+  const stripped = base.match(/^(.*[a-z0-9])[A-Z][A-Za-z0-9]*$/);
+  if (stripped?.[1] && stripped[1].length >= 6) return pick(stripped[1]);
+  return null;
+}
+
+/**
+ * `foo.test.ts` -> `foo.ts` (or .tsx/.js/...) in the same directory or, for
+ * a test kept in a `tests/`, `test/` or `__tests__/` folder, in the folder
+ * above it; `FooTests.swift` -> `Foo.swift` anywhere in the source tree.
+ */
+export function siblingSource(root: string, testFile: string, index?: SourceIndex): string | null {
+  if (/\.swift$/.test(testFile)) return index ? swiftSibling(testFile, index) : null;
   const dir = dirname(testFile);
   const base = basename(testFile).replace(TEST_FILE_RE, '');
-  for (const ext of SOURCE_EXTS) {
-    const candidate = join(dir, `${base}${ext}`);
-    if (existsSync(join(root, candidate))) return candidate;
-  }
+  const dirs = /^(__tests__|tests?|specs?)$/.test(basename(dir)) ? [dir, dirname(dir)] : [dir];
+  for (const d of dirs)
+    for (const ext of SOURCE_EXTS) {
+      const candidate = join(d, `${base}${ext}`);
+      if (existsSync(join(root, candidate))) return candidate;
+    }
   return null;
 }
 
@@ -197,15 +254,45 @@ export function parseTimings(json: string, root: string): Map<string, Timing> {
   return timings;
 }
 
+/**
+ * Parse a JUnit/xunit XML report (`swift test --xunit-output <file>`) into
+ * per-class timings. XCTest reports class names, not paths, so the map is
+ * keyed by the class's last component (`FooTests`) and `collectRepo` looks
+ * files up by basename.
+ */
+export function parseXunitTimings(xml: string): Map<string, Timing> {
+  const timings = new Map<string, Timing>();
+  for (const m of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    const attrs = new Map<string, string>();
+    for (const a of (m[1] ?? '').matchAll(/(\w+)="([^"]*)"/g)) attrs.set(a[1] ?? '', a[2] ?? '');
+    const cls = (attrs.get('classname') ?? '').split('.').pop();
+    if (!cls) continue;
+    const durationMs = Math.max(0, Math.round(Number(attrs.get('time') ?? 0) * 1000));
+    const failed = /<(failure|error)\b/.test(m[2] ?? '');
+    const prev = timings.get(cls) ?? { durationMs: 0, failed: false };
+    timings.set(cls, { durationMs: prev.durationMs + durationMs, failed: prev.failed || failed });
+  }
+  return timings;
+}
+
 export function loadTimings(path: string | undefined, root: string): Map<string, Timing> {
   if (!path) return new Map();
-  return parseTimings(readFileSync(path, 'utf8'), root);
+  const text = readFileSync(path, 'utf8');
+  if (!text.trimStart().startsWith('<')) return parseTimings(text, root);
+  // SwiftPM writes Swift Testing results beside the XCTest file.
+  const sibling = path.replace(/\.xml$/, '-swift-testing.xml');
+  const timings = parseXunitTimings(text);
+  if (sibling !== path && existsSync(sibling))
+    for (const [k, v] of parseXunitTimings(readFileSync(sibling, 'utf8'))) timings.set(k, v);
+  return timings;
 }
 
 export type CollectOptions = {
   root: string;
   patterns?: string[];
   timings?: Map<string, Timing>;
+  /** Parse JS/TS files with tree-sitter (default true); false keeps the regex-only analysis. */
+  ast?: boolean;
 };
 
 /** Map each file to the first file (in listing order) with identical whitespace-stripped content. */
@@ -323,8 +410,10 @@ export function findSharedBlocks(
 }
 
 /** Read every test file in the repo and extract its signals. */
-export function collectRepo(options: CollectOptions): Signals[] {
+export async function collectRepo(options: CollectOptions): Promise<Signals[]> {
   const root = resolve(options.root);
+  const useAst = options.ast !== false;
+  if (useAst) await initAst();
   const churn = buildChurnIndex(root);
   const timings = options.timings ?? new Map<string, Timing>();
   const files = listTestFiles(root, options.patterns).map((file) => ({
@@ -334,21 +423,29 @@ export function collectRepo(options: CollectOptions): Signals[] {
   const duplicates = findDuplicates(files);
   const similar = findSimilar(files);
   const shared = findSharedBlocks(files);
+  const sourceIndex = files.some(({ file }) => file.endsWith('.swift'))
+    ? buildSourceIndex(root)
+    : undefined;
   const signals = files.map(({ file, text }) => {
-    const source = siblingSource(root, file);
+    const source = siblingSource(root, file, sourceIndex);
     const resolved = source ? resolveModuleText(root, source) : null;
-    return analyzeTest({
+    const input = {
       file,
       text,
+      facts: useAst ? extractFacts(file, text) : null,
       source,
       sourceText: resolved?.text ?? null,
       sourceFiles: resolved?.files.length ?? null,
       sharedHarness: shared.get(file) ?? null,
       churn: churnFor(churn, file, source),
-      timing: timings.get(file) ?? null,
+      timing: timings.get(file) ?? timings.get(basename(file, extname(file))) ?? null,
       duplicateOf: duplicates.get(file) ?? null,
       similarTo: duplicates.has(file) ? null : (similar.get(file) ?? null),
-    });
+    };
+    const signals = analyzeTest(input);
+    if (input.facts) signals.units = analyzeUnits(input, signals);
+    else if (file.endsWith('.swift')) signals.units = analyzeSwiftUnits(input, signals);
+    return signals;
   });
   // A file under test/ with no test blocks is a helper or fixture, not a test.
   return signals.filter((row) => row.tests > 0 || TEST_FILE_RE.test(row.file));

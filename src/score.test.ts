@@ -30,6 +30,7 @@ const base: Signals = {
   countPins: 0,
   deletedFileAsserts: 0,
   gatedSuites: 0,
+  dependencyGates: 0,
   machineGates: 0,
   gitShellouts: 0,
   pythonShellouts: 0,
@@ -51,6 +52,19 @@ const base: Signals = {
 const withSignals = (overrides: Partial<Signals>): Signals => ({ ...base, ...overrides });
 
 describe('score', () => {
+  it('tests that run only with a GPU, a binary, a model, or an env opt-in are an external dependency', () => {
+    const half = score(withSignals({ tests: 4, gatedSuites: 2, dependencyGates: 2 }));
+    expect(half.finding).toBe('external-dependency');
+    expect(half.components.environment).toBeCloseTo(0.5);
+    expect(half.reasons).toContain(
+      '2 test(s) run only with a GPU, a binary, a model, or an env opt-in',
+    );
+    expect(half.reasons.join(' ')).not.toContain('conditional suite');
+    const few = score(withSignals({ tests: 10, gatedSuites: 3, dependencyGates: 1 }));
+    expect(few.finding).toBe('clean');
+    expect(few.reasons).toContain('2 conditional suite(s)');
+  });
+
   it('weights sum to 100 and a clean test scores low with no reasons', () => {
     expect(Object.values(WEIGHTS).reduce((a, b) => a + b, 0)).toBe(100);
     const s = score(base);
@@ -270,5 +284,27 @@ describe('score', () => {
     expect(slow.components.cost).toBeGreaterThan(0.9);
     expect(slow.reasons).toEqual(expect.arrayContaining(['200 lines per test', '30s runtime']));
     expect(slow.finding).toBe('clean');
+  });
+});
+
+describe('score with units', () => {
+  const unit = (overrides: Partial<Signals>, name: string) => ({
+    ...withSignals({ tests: 1, expects: 2, ...overrides }),
+    name,
+    fullName: name,
+    line: 1,
+    endLine: 5,
+  });
+  it('promotes a clean file to review when three tests restate the implementation', () => {
+    const bad = { callExpects: 2, expects: 2, weakExpects: 2 };
+    const one = score(withSignals({ units: [unit(bad, 'a'), unit({}, 'b')] }));
+    expect(one.finding).toBe('clean');
+    expect(one.reasons).toContain('1 of 2 tests restate the implementation');
+    expect(one.units.map((u) => u.finding)).toEqual(['restates-implementation', 'clean']);
+    const three = score(
+      withSignals({ units: [unit(bad, 'a'), unit(bad, 'b'), unit(bad, 'c'), unit({}, 'd')] }),
+    );
+    expect(three.finding).toBe('review');
+    expect(three.reasons).toContain('3 of 4 tests restate the implementation');
   });
 });
