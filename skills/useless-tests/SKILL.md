@@ -56,8 +56,7 @@ mutation evidence on a Swift package, `npx useless-tests mutate --root <pkg>
 --mutate 'Sources/<Lib>/*' --max 300` writes a Stryker-shaped report in a few
 minutes on a small package; pass it with `--mutation` like any other.
 
-If it is not installed, `pnpm dlx useless-tests` works, or clone
-`~/projects/useless` and run `pnpm dev --root <repo>`.
+If it is not installed, `pnpm dlx useless-tests` works.
 
 Read the three summary lines and the table. The third line ends with "tests
 flagged on their own: N of T": the parse scores every `it`/`test` block

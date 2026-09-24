@@ -45,7 +45,7 @@
     },
     {
       "name": "mere-run",
-      "root": "/Users/nerd/mere/mere-run",
+      "root": "mere-run",
       "mutation": "reports/mere-run.json.gz",
       "commit": "2a3dd86c0ac05511c77aeeab07e6eb1426f3541c",
       "note": "Sources/MereRunCLI/{Commands,Support}; useless mutate --filter MereRunCLITests, 80 sampled of 12,357; ~35 min"
