@@ -1,0 +1,1111 @@
+[
+  {
+    "file": "src/helper/streaming/stream.test.ts",
+    "score": 20,
+    "finding": "clean",
+    "reasons": [
+      "59% of its lines also appear in src/helper/streaming/sse.test.tsx",
+      "3 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 22,
+        "verdict": "keep",
+        "bug": "Dropping the `finally { stream.close() }` (or not awaiting `onError`) makes the error test hang or fail: `reader.read()` only resolves with `value` undefined once the writable is closed, and `onError` must be invoked with the Error plus the StreamingApi. Likewise, removing the old-Bun abort listener or breaking StreamingApi's cancel-to-onAbort wiring fails tests 2-4.",
+        "refactor": "Changing how the old-Bun check reads the runtime version (e.g. `process.versions.bun` instead of `global.Bun.version`, or hoisting the check to module load) breaks tests 3 and 4, which fake `global.Bun = { version: '1.1.0' }` and never restore it if an assertion throws. Test 2 also asserts `aborted` synchronously after `reader.cancel()`, so any refactor that fires abort callbacks on a microtask would fail it despite identical observable behaviour.",
+        "symptom": "Mild environment-sniffing without injection: the module reads a global to detect Bun, so the test must mutate `global.Bun` by hand and has no afterEach to clean it up. The 59% overlap with sse.test.tsx is the two helpers sharing one shape, not a bloated file.",
+        "confidence": "high",
+        "notes": "Five small, fast behavioural tests (three 1ms sleeps total) that exercise write, client cancel, signal abort, pipe abort, and error paths of a 40-line module. Worth keeping; the only cheap improvements are an afterEach that deletes global.Bun and awaiting the cancel promise before asserting."
+      }
+    ],
+    "rating": 22,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/ssg/ssg.test.tsx",
+    "score": 17.8,
+    "finding": "clean",
+    "reasons": [
+      "55% of expects are \"mock was called\" (with args, injected fakes)",
+      "pins 4 collection sizes",
+      "3 real-clock wait(s)",
+      "1 of 51 tests restate the implementation"
+    ],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Dropping the ensureWithinOutDir call in generateFilePath (or weakening it to a prefix check) would let '/../static-evil/pwned' and 'C:pwned' params write outside outDir; five tests assert success=false, 'Path traversal detected', and zero mkdir/writeFile calls. Likewise a regression in hook ordering, the Content-Type ';' split, the '/' -> index.html mapping, or the string-vs-Uint8Array branch all flip concrete path/content assertions.",
+        "refactor": "Any refactor that legitimately attaches a listener to req.signal (e.g. abort propagation with {once:true}) fails 'should avoid memory leak from req.signal.addEventListener'; and 'check extensions' only asserts mkdir was called with the outDir, which breaks if directory creation moves to per-file paths while remaining correct. Both are narrow; the bulk of assertions are on the emitted file path + content through the injected fs seam, which is the module's actual output contract.",
+        "symptom": "Nothing structural. The scorer's 55% 'mock was called' count is misleading here: FileSystemModule is a designed injection point and toHaveBeenCalledWith(path, content) is the observable output. Minor smells only: a duplicated error test, one presence-only afterGenerateHook test, a near-empty 'check extensions' test, three 10ms real-clock waits, and console.log noise. Middleware-focused describes (ssgParams, disableSSG/onlySSG) could live in middleware.test.tsx.",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural suite with strong security regression coverage; the injected-fake assertions are output checks, not mock coupling. Fold the two redundant error tests and the 'check extensions' and afterGenerateHook-called-with-anything tests into siblings, but the file as a whole earns its keep."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/streaming/sse.test.tsx",
+    "score": 12.7,
+    "finding": "clean",
+    "reasons": [
+      "4 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Changing `message.id !== undefined` to `message.id &&` (dropping the empty-id line that resets Last-Event-ID), using truthiness for retry so `retry: 0` is skipped, or narrowing the split regex to `\\n` so CR/CRLF data leaks raw line breaks into the frame; each is a realistic edit and each is caught by a dedicated test.",
+        "refactor": "Refactoring writeSSE to emit the frame as several `write()` calls (one per field) instead of one joined string is wire-equivalent for SSE clients but breaks most tests, which assume `reader.read()` returns the whole frame in a single chunk; `res.text()` is used only in the empty-id test.",
+        "symptom": "Nothing structural. Minor hygiene issues: the old-Bun test sets `global.Bun` and never restores it, leaking into later tests; the close-spy check uses a 100ms real-clock wait rather than awaiting stream completion; heavy copy-paste of the reader/decoder boilerplate.",
+        "confidence": "high",
+        "notes": "Fail-closed tests over the actual byte output covering headers, framing, CR/CRLF/mixed line endings, injection guards on event/id, retry:0, empty id, async/JSX data, error path, and both abort mechanisms. Cheap to run (~150ms of sleeps) and every assertion maps to a plausible regression; a helper to read the full body would remove the single-chunk brittleness."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/timeout/index.test.ts",
+    "score": 12.6,
+    "finding": "clean",
+    "reasons": [
+      "4 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Dropping the Promise.race so the middleware simply awaits next() (or rejecting with a plain Error instead of the HTTPException) would make the three slow-endpoint tests fail: status would be 200 or 500 instead of 504/408/500 with the expected message. Likewise forgetting to call exception(context) when it is a function would fail the custom and error cases.",
+        "refactor": "none. The tests go through Hono's public request path and only assert status and body; renaming the inner function, swapping the race for an AbortController-based implementation, or extracting the timer setup would all pass.",
+        "symptom": "Nothing structural. The only cost is real-clock waits totaling roughly 4 seconds and a 100 ms margin on the no-timeout case, which could flake under CI load; vi.useFakeTimers would remove both without changing what is asserted. Missing clearTimeout is the one plausible regression this file cannot see.",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural coverage of every branch of a tiny module. Worth converting to fake timers to cut wall time and flake risk, but not worth deleting or moving."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/logger/index.test.ts",
+    "score": 11.3,
+    "finding": "clean",
+    "reasons": [
+      "4 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 22,
+        "verdict": "fold",
+        "bug": "Any regression in colorStatus's status-to-color mapping (e.g. 3xx returned yellow, or the NO_COLOR branch ignored), dropping the query string from the logged path via the url.slice(indexOf('/', 8)) logic, or omitting the elapsed-time suffix would all fail these tests; the 100/700 cases also pin the fallback for unsupported status classes.",
+        "refactor": "None that is truly behaviour-preserving: the log string handed to the print function is the module's entire public contract, so any refactor that keeps it byte-identical passes. Only an ANSI-code swap (e.g. \\x1b[39m instead of \\x1b[0m for reset) would break it, and that is an output change, not a refactor.",
+        "symptom": "Nothing structural. Mild copy-paste: the NO_COLOR describe duplicates the whole fixture and five near-identical cases, and each block burns a real 1s sleep for the 'Time in seconds' case, so the file costs ~2s of wall clock for two assertions. The incoming '<--' line is never asserted because the print stub overwrites it.",
+        "confidence": "high",
+        "notes": "Genuinely behavioural and cheap to reason about; real bugs in status colouring, path/query handling and NO_COLOR are caught. Fold the NO_COLOR suite into a parameterised sibling with one or two cases, keep a single seconds test (or fake timers), and add one assertion on the incoming line."
+      }
+    ],
+    "rating": 22,
+    "verdict": "fold",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/ip-restriction/index.test.ts",
+    "score": 10.7,
+    "finding": "clean",
+    "reasons": [
+      "71% weak assertions"
+    ],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Off-by-one in the CIDR mask (e.g. `(1n << BigInt(prefix)) - 1n` shifted by the wrong width) or dropping the IPv4-mapped canonicalization in buildMatcher: `::ffff:127.0.0.1` would stop matching rule `127.0.0.1`, or `192.168.2.5` would fall outside `192.168.2.0/24`, failing the Static Rules / CIDR / Should restrict tests. Deny-before-allow precedence and the allowList-empty-means-allow-all branch are also both pinned by the 192.168.2.10 and /allow-empty cases.",
+        "refactor": "Rewording the `Invalid rule: ${rule}` TypeError message breaks the invalid-CIDR test. Separately, the isMatchForRule helper passes `undefined as any` as the context and infers 'no match' from the middleware throwing; a refactor that produces the 403 without touching `c` (e.g. HTTPException with only a message) would make every toBeFalsy assertion pass as truthy and fail the suite.",
+        "symptom": "Mostly nothing. The one smell is that buildMatcher is not exported, so the isMatchForRule table drives it through the middleware with a fake undefined context and a try/catch, which is what the scorer flags as weak toBeTruthy/toBeFalsy assertions. Exporting the matcher would make those direct boolean asserts and remove the fragility.",
+        "confidence": "high",
+        "notes": "Dense behavioural coverage of a security-relevant module: IPv4/IPv6 CIDR boundaries, mapped-address canonicalization, deny/allow precedence, invalid remote and invalid rule handling, and onError bypass on invalid input. The weak-assertion count is an artifact of asserting booleans, not of low value."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/ssg/plugins.test.tsx",
+    "score": 10.3,
+    "finding": "clean",
+    "reasons": [
+      "1 of 9 tests restate the implementation"
+    ],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Dropping 308 from REDIRECT_STATUS_CODES, returning `res` instead of `false` when Location is missing, or interpolating `location` without the escaping `html` tag (XSS) would each fail a specific test here; the status-code matrix and escape test are fail-closed on real regressions.",
+        "refactor": "The first test breaks if toSSG stops resolving `defaultPlugin` through the module namespace at call time (e.g. destructured import or inlined default); the remaining tests also pin exact markup like `<meta name=\"robots\" content=\"noindex\" />` and the anchor copy, so a self-closing-tag or wording change fails them without any behaviour change.",
+        "symptom": "Nothing structural; the plugin API is cleanly injectable and the tests drive it through the real toSSG loop with a fake fs. The lone spy test is the only smell, and it really tests ssg.ts's default, not this module.",
+        "confidence": "high",
+        "notes": "Eight of nine tests assert observable output through the public toSSG path and cover the status-code matrix, missing Location, ordering with defaultPlugin, and HTML escaping. The 'uses defaultPlugin when omitted' spy test belongs in ssg.test or should be rewritten to assert output, but that is a one-test trim, not a file problem."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/jwt/jwt.test.ts",
+    "score": 10.1,
+    "finding": "clean",
+    "reasons": [
+      "pins 2 sha256 digest(s)"
+    ],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping the Number.isFinite guard in verify (or the symmetricAlgorithms rejection in verifyWithJwks, or the header.alg !== alg check) fails multiple tests immediately; every claim check, algorithm-confusion path, aud/iss matching branch, and all eleven signing algorithms are exercised against real WebCrypto with mismatched-key negative cases.",
+        "refactor": "Reordering the header object literal in sign() to {typ, alg} changes the encoded first segment and breaks the six pinned HS256/HS384/HS512 token strings, even though the token stays valid. Rewording any error message also fails the toEqual(new JwtXxx(...)) assertions since vitest compares Error messages.",
+        "symptom": "Nothing structural. The file is long mostly from copy-paste (three near-identical symmetric-rejection tests, repeated try/catch blocks that could be rejects.toThrow), not from an untestable module. The two flagged sha256 digests are raw HMAC key material for importKey, not brittle output pins.",
+        "confidence": "high",
+        "notes": "Real-crypto, fail-closed behavioural coverage of a security-critical module with regression tests for concrete past CVE classes (alg confusion, symmetric-in-JWKS, key mutation, non-finite claims). Pinned HMAC tokens are legitimate interop contracts; the only cost is verbosity, which could be trimmed with it.each without changing what it catches."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/csrf/index.test.ts",
+    "score": 9.5,
+    "finding": "clean",
+    "reasons": [
+      "2 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the `origin === undefined` early deny (or the `|| 'text/plain'` fallback for a missing content-type) would let a form POST with no Origin header through; 'should be 403 if request has no origin header' and 'should be 403 if the content-type is not set' fail. Likewise removing the `i` flag from the content-type regex fails the 'Application/x-www-form-urlencoded' case.",
+        "refactor": "none. Every test drives the middleware through app.request and asserts only status, body, and whether the downstream handler ran. Renaming or extracting the internal handler factories, swapping HTTPException for a direct 403 Response, or reordering the guard clauses would all pass.",
+        "symptom": "nothing structural. One real defect in the tests themselves: the 'multipart/form-data' and 'text/plain' cross-origin tests reuse buildSimplePostRequestData, which hardcodes application/x-www-form-urlencoded, so they are exact copies of the urlencoded test and a regex change that stopped matching multipart or text/plain would go uncaught. The two 10ms setTimeout waits are trivial and legitimately exercise the async-handler path.",
+        "confidence": "high",
+        "notes": "Black-box behavioural coverage of a security middleware, cheap to keep. Fix the two mislabeled tests by passing the content-type they claim to test, and consider adding 'same-site' under the default secFetchSite config."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/basic-auth/index.test.ts",
+    "score": 9.4,
+    "finding": "clean",
+    "reasons": [
+      "1 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the password comparison in the users loop (e.g. `if (usernameEqual)` alone) would NOT be caught: no test sends a correct username with a wrong password. Bugs that would be caught: forgetting `users.unshift` for the options user, emitting the JSON invalidUserMessage without the application/json content-type, not awaiting onAuthSuccess (the async test's 10ms timer catches it), or short-circuiting to 401 when verifyUser returns true.",
+        "refactor": "none. Every assertion is on HTTP-observable behaviour through a real Hono app: status, body, headers, handler reached. Renaming the inner function, reordering the Promise.all, or extracting the 401 builder leaves the file green.",
+        "symptom": "nothing. Minor smells only: a module-level shared app plus a mutable `handlerExecuted` flag, repeated `expect(res).not.toBeNull()` noise, and one real 10ms setTimeout. Coverage gaps (wrong-password-right-username, WWW-Authenticate realm header, the constructor throw on missing options) are missing tests, not useless ones.",
+        "confidence": "high",
+        "notes": "A cheap, fail-closed behavioural suite that exercises the middleware end to end; the scorer's real-clock flag is a 10ms timer that legitimately tests that async onAuthSuccess is awaited. Add a wrong-password case and a realm header assertion rather than trimming anything."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/stream.test.ts",
+    "score": 9.1,
+    "finding": "clean",
+    "reasons": [
+      "2 real-clock wait(s)"
+    ],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Moving the writer re-acquisition in pipe() out of the finally block (only re-acquiring on success) would leave write() after a failed pipe hitting a released writer and silently dropping data; the 'pipe() re-acquires writer lock when pipeTo() throws' and 'pipe() can be called again' tests would fail. Likewise dropping the aborted guard would double-fire subscribers and fail 'abort()'.",
+        "refactor": "none. The tests only touch the public surface (write, writeln, pipe, close, abort, onAbort, aborted, responseReadable) through real TransformStream/ReadableStream instances; renaming private fields, reordering methods, extracting the encode step, or swapping forEach for a for-of loop in abort() would all pass.",
+        "symptom": "nothing. The two 'real-clock waits' are setTimeout(0) macrotask flushes needed to observe unhandledRejection, not timing-dependent sleeps. Minor nit: the pipe() test uses unawaited fire-and-forget IIFEs, which is slightly fragile but deterministic here.",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural tests driven through real Web Streams with no mocking of the module; the vi.fn() usages are listener spies, not stubs of collaborators. Each regression test maps to a concrete past bug class (lock leak on pipe failure, unhandled rejections from abort listeners)."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/bearer-auth/index.test.ts",
+    "score": 7.5,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 22,
+        "verdict": "keep",
+        "bug": "Dropping the space check (`headerToken[prefix.length] === ' '`) or making prefix matching case-sensitive would fail the 'Beare abcdefg' → 400 and the case-insensitive prefix tests; a regression that stopped escaping regex metacharacters in prefix would fail the 'X.Y' vs 'XZY' → 400 test; building the WWW-Authenticate value from an object without the prefix or with the wrong join would fail the object-form tests.",
+        "refactor": "none that would break the runtime tests: they go through app.request and assert only on status, body, and headers. The type tests would fail on a change to the MiddlewareHandler<E> return type inference, and the options-validation test pins an exact error string, but neither is a behaviour-preserving refactor of the middleware's runtime path.",
+        "symptom": "Nothing structural. The 24 near-identical option-variant routes for string/object/function×string/function×object across three error paths are a combinatorial matrix that should be a table-driven it.each on a small factory instead of one giant beforeEach registering 30+ routes; that is a test-hygiene cost, not a module problem.",
+        "confidence": "high",
+        "notes": "Black-box behavioural tests through the real Hono app that pin the HTTP contract (401 vs 400, WWW-Authenticate formatting, prefix and regex-escape handling) and would catch realistic regressions cheaply. Rating reflects the bloated beforeEach and repeated test names rather than any real uselessness; folding the option-variant tests into it.each would halve the file without losing coverage."
+      }
+    ],
+    "rating": 22,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/cache/index.test.ts",
+    "score": 7.4,
+    "finding": "clean",
+    "reasons": [
+      "1 of 53 tests restate the implementation"
+    ],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping `__hono_cache_method` from createCacheKey (so GET and QUERY share a key) fails 'Should keep GET and QUERY responses in separate cache entries'; loosening the Cache-Control regex to miss `no-cache=\"Set-Cookie\"`, forgetting the Authorization bypass, or hashing only the body without Content-Type in createQueryDigest each fail a dedicated test. Nearly every branch of the module has a behavioural test with a hit/miss counter or body assertion.",
+        "refactor": "Renaming the internal query parameters (`__hono_cache_key`, `__hono_cache_method`) or reordering searchParams.append calls breaks 'Should use dynamically generated cache key', 'Should cache request URLs containing a fragment', and 'Should preserve fragments in custom cache keys', which assert the exact synthetic key URL. Everything else survives extraction or reordering.",
+        "symptom": "Nothing structural. Minor smells: three tests leak the internal cache-key wire format; 'Should not return cached response' cannot distinguish cached from uncached (no counter); a shared module-level globalStore makes the first describe block order-dependent.",
+        "confidence": "high",
+        "notes": "The scorer's flagged control test is a legitimate positive baseline for the surrounding negative 'put not called' tests, not a tautology. Large file, but the size tracks a large RFC-driven surface (Vary variants, QUERY digests, key collisions), and almost every test would catch a real regression."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/etag/index.test.ts",
+    "score": 7.1,
+    "finding": "clean",
+    "reasons": [
+      "pins 2 sha256 digest(s)"
+    ],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Any of several: etagMatches stops stripping the W/ prefix (weak If-None-Match test fails); the chunked digest in digest.ts mishandles a chunk boundary at 32 KiB (the patterned 1 MB stream test with a 1/32768 split pins the same SHA-1 for both chunkings); the 304 branch keeps iterating headers.keys() while deleting and skips every other header (the X-Custom-1..4 test); the method guard drops QUERY or the !res.ok guard is lost (PUT/404 tests).",
+        "refactor": "none. Internal renames, extracting initializeGenerator, changing the split/trim parsing, or swapping the header-strip loop all pass. The only things that break it are visible contract changes: default algorithm, quoting, or 304 header retention set, and those are behaviour changes that break client caches, not refactors.",
+        "symptom": "nothing. The tests go through app.request against a real Hono instance with no mocks; the one globalThis.crypto override is a legitimate environment probe with proper restore.",
+        "confidence": "high",
+        "notes": "The scorer's 'pins sha256 digests' concern is misplaced here: a deterministic digest of a known body is the ETag contract, so the pinned hex values are the correct oracle rather than a snapshot. The file covers matching semantics (lists, OWS, wildcard, weak), method and status guards, upstream ETag precedence, header retention, empty/null bodies, and chunk-boundary hashing, all cheaply."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/basic-auth.test.ts",
+    "score": 6.9,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Swapping the capture groups in the return (returning { username: userPass[2], password: userPass[1] }), or changing USER_PASS_REGEXP to /^([^:]*):([^:]*)$/ so passwords containing ':' fail, or tightening it so empty username/password is rejected. All three flip the assertions on the valid, empty-username, and empty-password cases. Dropping the try/catch around decodeBase64 would also turn the 'invalid Base64' case into a thrown exception instead of undefined.",
+        "refactor": "none. The file only touches the public auth(req) contract via a real Request and Authorization header. Renaming internals, replacing decodeBase64 with atob, or inlining the regexes leaves every assertion intact.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Six cheap, black-box, fail-closed cases that pin the exact parsed credentials and the undefined-on-garbage path. Minor gaps (no test for a password containing ':', case-insensitive 'basic', or non-ASCII UTF-8 credentials) would be worth adding but do not make the file useless."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/body-limit/index.test.ts",
+    "score": 6.4,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Changing `size > maxSize` to `>=` (or Content-Length check off-by-one) fails the 14-byte/maxSize-14 200 test; dropping the up-front buffering so the check happens lazily fails all three 'chunked body bypass' tests (handler would run and return 200); trusting Content-Length when Transfer-Encoding is also present fails the RFC 7230 precedence test.",
+        "refactor": "Switching the read loop from `body.getReader()` to `for await (const chunk of body)` or `pipeTo` breaks the 'ReadableStream 413' test, which spies on `getReader` and asserts `readSpy` was called exactly 2 times; moving the size check after `chunks.push` or batching reads also changes the call count.",
+        "symptom": "Nothing structural. One test over-couples to the reader API and call count where a real oversized stream (as the later bypass tests use) would exercise the same path without mocks.",
+        "confidence": "high",
+        "notes": "Nearly every assertion is black-box over app.request and pins security-relevant behaviour (precedence, buffering before handler, custom onError). The only wart is the getReader spy test, which could be folded into the bypass scenarios that already cover the same rejection with a real stream."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/crypto.test.ts",
+    "score": 5.8,
+    "finding": "clean",
+    "reasons": [
+      "pins 2 sha256 digest(s)",
+      "1 skipped"
+    ],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the zero-pad in the hex conversion (x.toString(16) without the '00' prefix/slice) would shorten digests whose bytes are below 0x10; the pinned 'hono' sha256 contains 0x0b and 0x05 bytes, so the first assertion fails. Likewise, swapping TextEncoder for a Latin-1 encoding breaks the '炎' cases, and stringifying a Uint8Array instead of passing it through breaks the Buffer test.",
+        "refactor": "none. The assertions pin outputs of standardized algorithms (SHA-256/SHA-1), which is the correct oracle here; internals like createHash's structure, the Algorithm alias field, or the byte-to-hex loop can be rewritten freely as long as the digest is right. Only renaming the public exports would break it, and that is an API change, not an internal refactor.",
+        "symptom": "Mostly nothing. The skipped md5 test is a small symptom of a runtime-dependent module (Node's WebCrypto lacks MD5) with no environment matrix to exercise it, and the null return path when crypto.subtle is absent is untestable without injection. Neither costs much.",
+        "confidence": "high",
+        "notes": "The scorer flags pinned sha256 digests, but pinning a known-answer test against a fixed standard is exactly right for a hash utility; these are cheap, fail-closed vectors. The one dead weight is the permanently skipped md5 block, which could be moved to a Workers/Bun-only run or deleted."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/filepath.test.ts",
+    "score": 5.8,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping the global flag from the backslash normalization (`filename.replace(/\\\\/, '/')`) would leave `foo\\bar\\baz.txt` as `foo/bar\\baz.txt` and fail the multi-segment assertion; likewise removing `[\\/\\\\]` from the traversal regex would let `\\..\\foo` through and fail the backslash `toBeUndefined` checks, a real path-traversal regression in a static-file helper.",
+        "refactor": "none. Both functions are exported pure functions tested only through their public signature and return values; renaming internals, reordering the replace steps, or extracting helpers would not break any assertion.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural coverage of a security-sensitive pure function, cheap to run, no mocks. Only weaknesses: one giant `it` per function hides later failures once the first expect trips, and the trailing-slash filename branch of getFilePath, trailing-slash root, and the absolute-path-with-relative-root guard are unexercised."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/buffer.test.ts",
+    "score": 5.5,
+    "finding": "clean",
+    "reasons": [
+      "pins 2 sha256 digest(s)",
+      "1 skipped"
+    ],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "An off-by-one in `equal` (e.g. `while (--i)` instead of `while (i--)`) skips byte 0, so the 'different content' case ([1,2,3,4] vs [2,2,3,4], differing only at index 0) would wrongly return true and fail. Dropping the `originalEqual` check in `timingSafeEqualString` would also fail the md5-collision case, and removing the media-type lowercasing in `bufferToFormData` would fail the mixed-case boundary test on runtimes that reject 'Multipart/Form-Data'.",
+        "refactor": "none. The tests only exercise exported functions through their public contracts; swapping DataView for Uint8Array in `equal`, running hashes sequentially instead of via Promise.all, or restructuring the string/non-string branches of `timingSafeEqual` all pass.",
+        "symptom": "nothing structural. The `it.skip` block is dead weight pinning deprecated non-string behaviour, and the `timingSafeEqual(undefined, undefined) === true` assertion pins an accidental quirk (both hash the string 'undefined') rather than a desired contract.",
+        "confidence": "high",
+        "notes": "The scorer's 'pins sha256 digests' is a false positive: the hex string is compared to itself as a self-equality input, not asserted as an output. Delete the skipped block and drop the undefined/undefined assertion; otherwise this is a cheap, fail-closed behavioural suite covering a security-relevant comparison."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/jsx-renderer/index.test.tsx",
+    "score": 5.4,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Flipping the docType default (treating undefined like false), dropping the Layout prop so nested renderers no longer wrap the parent layout, replacing c.html/c.body with a fresh Response so c.status(201) is lost, or forgetting to evaluate function-form options before reading .stream would each fail specific tests with exact-output assertions.",
+        "refactor": "The two streaming tests assert exact chunk boundaries, the global Suspense counter values (H:0 then H:1, so they depend on test execution order), and the verbatim inline patch script and <!--/$--> marker from jsx/streaming; any behaviour-preserving change to that script text, ID format, or chunking, or to the incidental Content-Encoding: Identity header, breaks this file even though jsx-renderer itself is unchanged.",
+        "symptom": "Mostly nothing; the streaming tests leak a module-level Suspense counter across tests (the file itself admits the ordering dependency), which is a small missing-reset/DI smell in jsx/streaming rather than in this middleware.",
+        "confidence": "high",
+        "notes": "Fail-closed end-to-end tests through Hono that cover every option branch, nested layouts, status preservation, header merging, and the request-context hook, with a real type-level test for the null return. Cost is concentrated in the two streaming tests that snapshot another module's script and counter; those could use toContain on the payload and a counter reset, but the file as a whole is high value."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/trailing-slash/index.test.ts",
+    "score": 4.9,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the `c.req.path !== '/'` guard in trimTrailingSlash (or off-by-one in the substring) would 301 the root path to an empty pathname, failing the root GET/HEAD tests; using c.req.path instead of the full URL when building the redirect would drop the query string and fail all four 'preserve query parameters' tests; inverting the skip predicate or returning 302 instead of 301 would also fail.",
+        "refactor": "none. Every assertion goes through app.request and inspects status/Location, so extracting the shared redirect helper, reordering the condition clauses, renaming the inner named functions, or collapsing the alwaysRedirect/404 branches all pass.",
+        "symptom": "nothing. Mild copy-paste bloat: every HEAD case duplicates its GET twin verbatim and every `expect(resp).not.toBeNull()` is dead weight against a Response that can never be null, but neither points at a module problem.",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural coverage of both middlewares, both modes, skip, HEAD, and query preservation at negligible cost. Gaps worth adding rather than cutting: no test that a non-GET/HEAD method with a stray slash is left alone, and no test that trim's default mode leaves a 200 trailing-slash route unredirected. Could be table-driven to halve the line count, but it earns its keep as is."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/websocket/index.test.ts",
+    "score": 4.6,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 22,
+        "verdict": "keep",
+        "bug": "In defineWebSocketHelper's middleware branch, dropping `await next()` when the handler returns void (or returning the void result directly) fails the 'should call next()' test; in the direct-call branch, removing the `throw new Error('Failed to upgrade WebSocket')` guard fails the rejects test; in WSContext, assigning `init.url ?? null` without wrapping in `new URL` fails the string-URL normalization case.",
+        "refactor": "Making the WSContext constructor eagerly read or validate `init.readyState`/`init.send`/`init.close` (e.g. destructuring or asserting them up front) would break the tests, because every WSContext test passes a partial object cast `as WSContextInit` with only the one field it exercises. Otherwise the tests go through the public API only and survive internal reorganization.",
+        "symptom": "Nothing structural. Minor smells: the 'Should normalize message in send()' test asserts a pass-through as if it were normalization, and the 'upgrading failed' test does not await `expect(...).rejects.toThrow()` (Vitest 4 auto-detects un-awaited assertions, so it still works here but is fragile). Option forwarding (`options ?? {}`, `options` into handler), `protocol` defaulting, and `raw` are untested.",
+        "confidence": "high",
+        "notes": "Cheap, fast, behavioural tests against a small public surface that pin the two real decisions in the module (next() on no-upgrade, throw on direct-call failure) plus URL normalization. Coverage gaps and the un-awaited rejects assertion keep it off the floor, but it is clearly worth keeping."
+      }
+    ],
+    "rating": 22,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/serve-static/path.test.ts",
+    "score": 4.6,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the `resolved.at(-1) !== '..'` guard (or popping on '..' when resolved is empty) turns `defaultJoin('public', '../../grandparent/file.html')` into 'grandparent/file.html' instead of '../grandparent/file.html'; likewise breaking the multi-slash regex yields 'public//file.html' for `['public/', 'file.html']`. Both are caught because the oracle is node's posix.join, not a hand-typed string.",
+        "refactor": "none. The file only touches the exported `defaultJoin` and compares its output to an independent oracle, so rewriting the internals (regex vs split/filter, reduce vs loop, different '.' handling) passes as long as results match posix.join.",
+        "symptom": "Nothing structural. Minor weakness: the test claims parity 'for all path operations' but the hand-picked cases avoid the one place the module actually diverges from posix.join: `defaultJoin('/a', '..')` returns '.' where posix.join returns '/' (the leading '' root segment gets popped). A fuzzed or property-based version would surface that; the current list was likely curated until it passed. Also the single it() with a bare toBe gives no case identity on failure.",
+        "confidence": "high",
+        "notes": "Cheap, oracle-based behavioural test that fails on real regressions and survives internal refactors. Worth converting to it.each and adding root-level '..' cases so the known divergence is either fixed or documented as intentional."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/factory/index.test.ts",
+    "score": 4.3,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "createApp forgetting to call initApp, or dropping defaultAppOptions when no per-call options are passed, fails the createApp / 'Should use the default app options' tests; a type-level bug such as dropping the IntersectNonAnyTypes env chain in the 8- or 9-handler overload fails 'Context Env with Multiple Middlewares' under tsc.",
+        "refactor": "none within the module: no test imports the Factory class or touches private fields, and createHandlers' filter body can be rewritten freely. The exact toEqualTypeOf against Hono<Env, ToSchema<...>, '/'> and ClientRequest<...> is brittle only to representation changes in core types outside this module.",
+        "symptom": "nothing significant. The 'Lint rules' test pins an eslint unbound-method property rather than behaviour, and the exact-type snapshots couple slightly to core type shapes, but the module is a thin typed pass-through so type assertions are the correct test form here.",
+        "confidence": "high",
+        "notes": "Cheap, fail-closed, and exercises the public type contract that is this module's whole purpose. Coverage of the 9- and 10-handler overloads is thin: the x9 overload's return tuple uses R for every element instead of R2..R9, and this file does not catch it."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/html/index.test.ts",
+    "score": 3.9,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the `typeof child === 'boolean' || child === null || child === undefined` branch so those values fall through to `escapeToBuffer(child.toString(), buffer)` would crash on null/undefined and print 'true'/'false', failing the it.each block; likewise removing `.flat(Infinity)` breaks the nested-array test, and forgetting `buffer.unshift('', child)` for callback-bearing HtmlEscapedStrings would make the Promise/resolveCallback test fail.",
+        "refactor": "Changing the sync-with-callbacks path so it returns a Promise instead of a plain string, or the Promise path to eagerly await and return a string, would fail the `toBeInstanceOf(Promise)` assertions. Those are arguably part of the public contract (the return type is `HtmlEscapedString | Promise<HtmlEscapedString>`), so this is a weak refactor hit, not a strong one.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Every test exercises a public tagged-template call and asserts the rendered HTML, covering each branch of the value dispatch (string, number, ignored values, nested arrays, raw, Promise<string>, Promise<HtmlEscapedString>, callback preservation). No mocks, no internals; one test title ('Should call $array.flat(Infinity)') names an implementation detail but the assertion itself is behavioural."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/pretty-json/index.test.ts",
+    "score": 3.6,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 10,
+        "verdict": "keep",
+        "bug": "Dropping the `c.req.query(targetQuery) === ''` branch (so a bare `?pretty` with no value is treated as falsy) fails the first three tests; loosening the content-type regex so `application/json-seq` matches, or tightening it so `+json` suffixes stop matching, fails the last two.",
+        "refactor": "none",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Fully black-box through a real Hono app with exact-output assertions on every option (space, query, force) and both sides of the content-type boundary; no mocks, no internal coupling, cheap to keep."
+      }
+    ],
+    "rating": 10,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/css/index.test.tsx",
+    "score": 3.5,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Dropping the escapeToBuffer step in newCssClassNameObject (or marking the cx() result isEscaped without escaping) reintroduces the attribute-injection XSS; the '\" onmouseover=alert(1)' test fails. Likewise, forgetting contextMap.set(context, [{}, added]) in appendStyle would re-emit styles on every callback and break the exact-output /sync and /stream assertions, and losing nonceMap propagation would fail /stream-with-nonce.",
+        "refactor": "Swapping the hash function or its input normalisation in common.ts (functionally equivalent class names, different digits) fails ~8 tests that hard-code css-2458908649 and friends; changing the Suspense client-script boilerplate in jsx/streaming also fails the two /stream tests even though nothing in this module changed.",
+        "symptom": "Mild snapshot coupling: exact hash literals and the streaming Suspense boilerplate are baked into expectations, so some failures will point at the wrong module. Not a sign of an untestable module; the shared renderTest case file is a reasonable way to cover the DOM and server contexts together.",
+        "confidence": "high",
+        "notes": "Genuinely behavioural: security regression tests for cx() escaping and style-element breakout, classNameSlug fallback rules, streaming injection, and minify semantics all fail closed on real bugs. Cost is low apart from the hard-coded hash digits, which could be replaced by a regex to make the file robust to hash changes."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/concurrent.test.ts",
+    "score": 3.2,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 18,
+        "verdict": "keep",
+        "bug": "An off-by-one in the capacity guard (`pool.size > concurrency` instead of `>=`) makes the first case fail: running.size would be concurrency+1 at the synchronous expect. Dropping the deferred `pool.delete(marker)` for `interval` (deleting immediately) makes the interval cases reject with 'interval violated'. Forgetting to thread `resolve` through the setTimeout retry hangs the queued jobs and the test times out.",
+        "refactor": "Starting jobs on a microtask instead of synchronously inside `run` (e.g. an `await` before `fn()`, or replacing the setTimeout polling with a queue drained after `await Promise.resolve()`) is externally equivalent but breaks `expect(running.size).toBe(Math.min(concurrency, count))`, which is asserted synchronously right after `pool.run` returns.",
+        "symptom": "Nothing structural. The interval cases depend on real wall-clock timers with a 1 ms fudge, which is a mild flake risk, but the module has no clock to inject and the tolerance is loose.",
+        "confidence": "high",
+        "notes": "Cheap, fail-closed, exercises both the Infinity fast path and the bounded path with meaningful assertions. The real gap is untested: `run` has no try/finally, so a rejecting job leaks its pool slot forever, and no case covers rejection."
+      }
+    ],
+    "rating": 18,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/ipaddr.test.ts",
+    "score": 3.2,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping the `octet > 255` guard in parseIPv4ToBinary (so '1.2.3.256' parses as 1.2.3.0 with overflow) fails the invalid-IPv4 test.each; removing the RFC 5952 single-zero-run check in convertIPv6BinaryToString turns '1:0:2:3:4:5:6:7' into '1::2:3:4:5:6:7' and fails that row; dropping the isIPv6LinkLocal zone-ID check lets '2001:db8::1%eth0' parse and fails that row.",
+        "refactor": "none — every assertion goes through the exported API and checks values, error class, and the exported error code constant; internal helpers (parseIPv4ToBinary, parseIPv6HexCode, throwInvalid*) can be renamed, inlined, or restructured freely.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Cheap, deterministic, fail-closed behavioural tests with well-chosen edge cases (zero-run compression ties, IPv4-mapped, zone IDs, leading zeros, unspecified address). Only nits: a couple of duplicated assertions, stale 'add tons of test cases here' comments, and convertIPv4BinaryToString is exercised only on low-byte values."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/color.test.ts",
+    "score": 3.1,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 18,
+        "verdict": "keep",
+        "bug": "Replacing the `cfWorkers` variable with a literal `import('cloudflare:workers')` would make esbuild (bundle:true, external:[]) fail to resolve the specifier and break the third test; separately, checking `process.env.NO_COLOR === 'true'` instead of key presence would fail the NO_COLOR test. Not caught: the Cloudflare and Deno branches are never exercised, and NO_COLOR='' (presence-only per no-color.org) isn't tested.",
+        "refactor": "none of substance; the only refactor that breaks it is un-hiding the cloudflare specifier from bundlers, which is precisely the regression the test exists to catch. The `warnings.length === 0` assertion is mildly brittle to future esbuild warning categories.",
+        "symptom": "nothing; reaching into globalThis is appropriate for a runtime-detection utility, and the esbuild test is a cheap, targeted guard for a documented bundler pitfall.",
+        "confidence": "high",
+        "notes": "Cheap, fail-closed, and each test maps to a plausible regression. Could be improved by adding a NO_COLOR='' case and a stubbed `navigator.userAgent === 'Cloudflare-Workers'` case, but as-is it earns its keep."
+      }
+    ],
+    "rating": 18,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/dev/index.test.ts",
+    "score": 3,
+    "finding": "clean",
+    "reasons": [
+      "46% of the file is literal expectation (7 blocks)"
+    ],
+    "reads": [
+      {
+        "rating": 18,
+        "verdict": "keep",
+        "bug": "Swapping the branches in handlerName (or a regression in isMiddleware/findTargetHandler that classifies the composed '/named' middleware as a handler) would change name/isMiddleware in inspectRoutes and the verbose showRoutes listing; likewise ignoring opts.colorize, dropping the NO_COLOR check, or miscomputing maxMethodLength padding all fail these exact-string assertions. The one gap: getRouterName is tested only with an explicit RegExpRouter, so removing the router.match warm-up (which exists to resolve SmartRouter) would not be caught.",
+        "refactor": "Batching the output into a single console.log with lines joined by '\\n' (identical terminal output) breaks every showRoutes test, because the capture pushes each console.log call's args as separate entries.",
+        "symptom": "Mostly nothing. Mild: console.log is hardcoded rather than injectable, so the tests monkeypatch a global and rely on call-granularity as an implicit contract.",
+        "confidence": "high",
+        "notes": "Literal expectations are appropriate here since the formatted output is the behaviour of a CLI printer; the scorer's 'literal expectation' flag is a false positive. Worth adding a SmartRouter case to getRouterName to cover the warm-up call."
+      }
+    ],
+    "rating": 18,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/cookie.test.ts",
+    "score": 2.9,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Changing the duplicate-name guard so later pairs overwrite earlier ones (last-wins), or replacing Object.create(null) with {} so 'toString=foo' reads the prototype method, or dropping the 44-char/'=' signature shape check so parseSigned mis-verifies 'rating3.5' as a signed value: each fails multiple tests here. Most cases are regression tests for real security fixes (NBSP name spoofing, prototype collisions, header injection via name/domain/path, 400-day caps).",
+        "refactor": "Reordering the Set-Cookie attributes in _serialize (e.g. emitting Path before Domain) is behaviour-preserving for every browser but fails the exact-string 'all options' assertions. Rewording any thrown error message also fails, since messages are matched verbatim.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Pure-function module with real inputs, no mocks, and each test names a distinct observable contract including hardcoded HMAC vectors that pin the wire format. Only weakness is exact-string coupling to attribute order and error text, which is cheap and arguably part of the public contract."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/encode.test.ts",
+    "score": 2.8,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 6,
+        "verdict": "keep",
+        "bug": "Swapping the URL-safe substitution map (e.g. mapping '+' to '_' instead of '-') or breaking the padding/tail handling in encodeBase64 would fail the RFC 3548 'FPucA9l+' and 'Zg==' vectors; a broken decodeBase64 fill loop that skipped the middle byte would fail the odd-length decode cases.",
+        "refactor": "none. The test only touches the two exported URL-safe functions with standard RFC 4648 / Wikipedia vectors, so renaming internals, changing the two-ended fill loop to a plain forward loop, or replacing btoa with a manual encoder all pass.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Cheap, fail-closed, spec-anchored table test over a pure function; the only nits are that toURLBase64 in the test mirrors the source's substitution logic and the 'sure.' vector is duplicated. Missing coverage worth adding, not deleting: unpadded input to decodeBase64Url and large buffers."
+      }
+    ],
+    "rating": 6,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/route/index.test.ts",
+    "score": 2.7,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Any regression in basePath's parameter expansion would fail this file: e.g. dropping the `+ 1` for the slash separator, treating `pattern === '*'` like a literal segment, or failing to honour the custom regex in `:sub{foo|bar}` would break the embedded-param, wildcard, and regex cases; dropping the `?? ''` fallback on out-of-range indexes would break the `routePath(c, 2)`/`baseRoutePath(c, 3)` assertions; and the nested `route()` end-to-end case guards the real basePath concatenation that Hono performs when mounting sub-apps.",
+        "refactor": "Changing the internal MatchResult tuple layout (e.g. `[[[handler, route], params]]` to a flat object or dropping the params slot) is behaviour-preserving for users but would break every unit case here, because they hand-build that structure directly rather than going through a router; the single Hono-based integration test would survive such a change.",
+        "symptom": "Nothing significant. The hand-built matchResult fixtures couple the tests to the router's internal tuple shape and are copy-pasted across five describe blocks, which is minor duplication rather than a design smell; the `// cached value` assertion is decorative since it can't distinguish cached from uncached output.",
+        "confidence": "high",
+        "notes": "Behavioural, fail-closed tests of a small pure helper module with real edge cases (negative indices, out-of-range, wildcards, custom regexes) plus one true end-to-end check through Hono routing. The only brittleness is the hand-crafted MatchResult shape, which is an acceptable trade for cheap, fast unit coverage."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/cors/index.test.ts",
+    "score": 2.6,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Reflecting the request Origin when `origin: '*'` and `credentials: true` (a classic CORS credential-leak regression, e.g. resolving `findAllowOrigin` to `(o) => o` for wildcard) fails the api10 tests and the 'Should not reflect an arbitrary Origin' tests; likewise changing the string-origin branch to a prefix/includes match fails 'Disallow an unmatched origin', and dropping the `Vary: Origin` append fails the vary-header tests.",
+        "refactor": "Joining allow-methods with ', ' instead of ',' (spec-equivalent header list) fails 'Allow methods by function' and 'Preflight default', which split on a bare comma or compare the exact string; dropping `statusText: 'No Content'` from the 204 response (irrelevant under HTTP/2) fails 'Preflight default'. The exact 'X-Custom-Vary-Value, Origin' assertion also pins the runtime's Headers.append join format rather than the module.",
+        "symptom": "Nothing structural. The only smell is redundancy: six tests re-assert the single invariant that wildcard+credentials never reflects the origin, and the sync/promise variants of origin and allowMethods duplicate each other; those could be folded into a parametrised test without losing coverage.",
+        "confidence": "high",
+        "notes": "Black-box behavioural tests through the real Hono request path, covering the security-critical branches (origin matching, credential reflection, Vary) with cheap fixtures and no mocks. A few assertions over-specify wire formatting (delimiter, statusText), which is the only real maintenance cost."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/combine/index.test.ts",
+    "score": 2.5,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping the `if (isNextCalled) break` guard in `some` (or the `!c.finalized` check) would make the two 'Should not call skipped middleware even if an error is thrown' tests fail, since middleware2 would then run after a downstream throw; removing `c.req.routeIndex = currentRouteIndex` in `every` would break 'Should pass the path params to middlewares'; and a TrieRouter mismatch on `/public/users/:id` in `except` would fail the array-condition test.",
+        "refactor": "none. Inner function names, replacing `compose` in `every` with a hand-rolled loop, or changing the internal 'No successful middleware found' message all leave every assertion intact; the vi.fn spies wrap real pass-through middleware and only observe whether user handlers ran, which is the public contract.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Black-box tests through a real Hono app covering ordering, short-circuit, false vs throw, nested some/every interplay, param propagation, and string/function/array conditions for except. The scorer's 17 'mocks' are spies on caller-supplied middleware, not mocks of the module's collaborators, so the mock count is a false signal; only minor overlap between the two 'skipped middleware' tests keeps this from being lower."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/proxy/index.test.ts",
+    "score": 2.4,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping 'transfer-encoding' from hopByHopHeaders, or forgetting to delete Content-Length alongside Content-Encoding, fails 'remove hop-by-hop headers' / 'compressed'; a regex regression in ALLOWED_TOKEN_PATTERN that accepts spaces fails 'invalid hop-by-hop headers with strictConnectionProcessing'; skipping the response Connection-listed header removal fails 'remove response headers listed in the Connection header'.",
+        "refactor": "Calling `fetch(input, init)` instead of `fetch(new Request(...))` would break every test that inspects `mock.calls[0][0].url` / `.headers`, even though the outbound wire request is identical. Otherwise renames/extractions of buildRequestInitFromRequest or preprocessRequestInit are invisible.",
+        "symptom": "Nothing significant. The global.fetch monkeypatch is a small DI smell, but customFetch already exists as an injection point and the fake-server mock is a legitimate in-memory origin, not an assertion on mock plumbing.",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural tests over the public surface (header stripping, Connection parsing, 400 on invalid tokens, body forwarding, abort propagation). Small coupling to the Request-object calling convention is the only refactor fragility."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/mime.test.ts",
+    "score": 2.3,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping the `.toLowerCase()` in getMimeType (fails 'IMAGE.JPG'), or simplifying getExtension back to `stored === mimeType` (fails every case in the charset-insensitive block, e.g. 'text/html; charset=utf-8' -> 'htm'). Both are plausible cleanups someone would attempt.",
+        "refactor": "Alphabetising or otherwise reordering the `_baseMimes` table. getExtension returns the first key whose value matches, so 'text/html' -> 'htm' and 'image/jpeg' -> 'jpeg' pin insertion order (htm before html, jpeg before jpg). Reordering is behaviour-preserving for getMimeType but silently flips these two assertions.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Pure function, zero mocks, real edge cases (multi-dot names, no extension, uppercase, custom table, parameter stripping). The only fragility is the first-match ordering dependency in getExtension, which is arguably a real contract worth pinning; the rest of the getExtension block is light table transcription but cheap."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/etag/digest.test.ts",
+    "score": 2,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 10,
+        "verdict": "keep",
+        "bug": "Replacing `chunk = value.slice(offset)` with `chunk = value.subarray(offset)` (or otherwise holding a reference to the reader's `value` instead of copying it) makes the second pull overwrite the buffered first chunk, so the digest becomes SHA-1 of 'BBBBBBBB' instead of 'AAAABBBB' and the hardcoded hex fails. This is exactly the aliasing bug the test name describes and a very plausible 'optimization' regression.",
+        "refactor": "none — only renaming the exported `generateDigest` or changing the hex output format would break it, and both are public-surface changes rather than internal refactors. Restructuring mergeBuffers, CHUNK_SIZE handling, or the loop body leaves it green.",
+        "symptom": "nothing — it is a focused regression test pinning a genuine invariant (the module must not alias caller-owned buffers) using the real ReadableStream and real crypto, with a single fail-closed assertion.",
+        "confidence": "high",
+        "notes": "Cheap, behavioural, and targets a subtle bug that ordinary etag tests with fresh-per-chunk buffers would never surface. The only weakness is that it exercises just the small-chunk buffering path, not the CHUNK_SIZE boundary paths, but those belong in sibling tests rather than making this one less useful."
+      }
+    ],
+    "rating": 10,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/accepts/accepts.test.ts",
+    "score": 1.8,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 15,
+        "verdict": "keep",
+        "bug": "Dropping or inverting the specificity tiebreak in defaultMatch's sort (so '*/*' beats 'application/json' at equal q) fails 'should prefer exact match over wildcard match at same quality factor'; making matchType treat '*/*' as matching any support fails the global-wildcard and Accept-Encoding '*' tests; sorting q ascending fails the req3 gzip;q=0.5,deflate usage case.",
+        "refactor": "Changing accepts() to read the header via c.req.raw.headers.get() instead of c.req.header() breaks the nine hand-rolled `{ req: { header } } as any` fakes even though behaviour is identical; the Hono-app Usage tests would keep passing.",
+        "symptom": "Nothing structural. The parseAccept test is misplaced (it exercises src/utils/accept, not this module) and asserts exact array shape including the redundant q-in-params representation, so it is slightly over-specified, but the module itself is a pure function and is tested as one.",
+        "confidence": "high",
+        "notes": "Cheap, deterministic, black-box tests that cover the real ranking edge cases (q ordering, specificity tiebreak, subtype vs global wildcard, missing header, custom matcher) plus two end-to-end usage checks. Only minor cost is the duck-typed context fakes coupling to c.req.header and one test that belongs beside utils/accept."
+      }
+    ],
+    "rating": 15,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/method-not-allowed/index.test.ts",
+    "score": 1.8,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 10,
+        "verdict": "keep",
+        "bug": "Dropping the `methods.add('HEAD')` line for GET routes, or forgetting to skip METHOD_NAME_ALL routes, or not deleting the stale Content-Length header from the 404 response, or miscomputing the mount base path for app.route() — each one is caught by a dedicated test asserting the observed 405 response and Allow header.",
+        "refactor": "Emitting the Allow header in sorted order instead of registration order (HTTP treats Allow as an unordered list) would fail every exact-string assertion such as 'GET, HEAD, POST, DELETE'; likewise changing the default body text from 'Method Not Allowed' would fail two tests. Both are borderline behavioural, so the brittleness is small.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Fail-closed black-box tests through app.request covering real edge cases (HEAD/GET aliasing, ALL routes, error handler 404s, mounted sub-apps, stale headers, custom methods). The only dead weight is the first test, which is a compile-time type check that asserts nothing at runtime beyond 'is a function'."
+      }
+    ],
+    "rating": 10,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/method-override/index.test.ts",
+    "score": 1.7,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Forgetting to strip the override source before re-dispatch (e.g. not deleting the header or the `_method` query param) would flip `headerValue`/`queryValue` from null to a value and fail; likewise dropping `duplex: 'half'` in the query path would lose the POST body and fail the 'has a body' test, and using `===` instead of `startsWith` on Content-Type would fail the charset test.",
+        "refactor": "none — the file drives the middleware end-to-end through app.request with no mocks or internal imports, so renames, extraction of the three branches, or swapping parseBody for request.formData() all pass as long as observable behaviour is preserved.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural coverage of all three override modes plus the GET passthrough, body preservation, and charset edge case. Only nit: the urlencoded 'PATCH - not found' test is a copy of the multipart one (sends FormData, not URLSearchParams), so it duplicates rather than extends coverage and could be fixed or folded."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/cookie/index.test.ts",
+    "score": 1.6,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 12,
+        "verdict": "keep",
+        "bug": "Dropping `domain: undefined` from the host-prefix branch of generateCookie/generateSignedCookie would emit `Domain=example.com` on a `__Host-` cookie and fail 'Set cookie with host prefix'; likewise forgetting to forward `opt?.prefix` from deleteCookie into getCookie would fail 'Get deleted value with prefix'.",
+        "refactor": "Reordering the attribute serialization in utils/cookie's serialize (e.g. emitting Path before Domain) is semantically neutral per RFC 6265 but breaks every exact-string Set-Cookie assertion here; within this module itself, none (the exports are the public API and every branch is observable).",
+        "symptom": "Nothing structural. Minor overlap with utils/cookie's own tests and opaque hardcoded HMAC fixtures, plus reliance on Headers.get joining multiple Set-Cookie values with ', ' rather than getSetCookie(), but these are small costs.",
+        "confidence": "high",
+        "notes": "Black-box tests through real Hono requests with no mocks that pin prefix handling, option precedence, signed-cookie round-trips, invalid-signature rejection, and deleteCookie's return value. Cheap to keep and would catch most realistic regressions in this thin wrapper."
+      }
+    ],
+    "rating": 12,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/serve-static/index.test.ts",
+    "score": 1.5,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping the `\\.{1,2}` traversal check (or decoding after the check instead of before) so `/static/%2e%2e/static/hello.html` resolves to a real file would flip the 404 to 200 and fail the traversal test; likewise reordering ENCODINGS to gzip-first would fail the brotli-preferred test, and forgetting to join DEFAULT_DOCUMENT when isDir is true would fail the two directory tests.",
+        "refactor": "none — every assertion goes through the public HTTP surface (status, headers, body) plus the documented getContent/isDir/onFound contract; the only coupling is `getContent toBeCalledTimes(1)` in the not-found case, which is arguably a real guarantee (no speculative precompressed probing when precompressed is off) rather than an implementation detail.",
+        "symptom": "nothing; getContent/isDir are the intended injection seams of a runtime-agnostic middleware, so the fakes are the design rather than a workaround.",
+        "confidence": "high",
+        "notes": "Fail-closed behavioural coverage of security-relevant paths (traversal, backslash injection, double-slash, root '..' handling) and content negotiation, with exact expected outputs. Cheap to keep and would catch the regressions that actually ship in this module."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/html.test.ts",
+    "score": 1.5,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 30,
+        "verdict": "keep",
+        "bug": "Any regression in escapeToBuffer's switch or substring bookkeeping fails it: e.g. dropping the `lastIndex = index + 1` update duplicates the escaped character (`&lt;<`), or swapping the `<`/`>` entity strings. Off-by-one in the final `substring(lastIndex, index)` would also truncate the trailing text.",
+        "refactor": "none. It only touches the public export `escapeToBuffer` and the documented StringBuffer shape; renaming internals, replacing the switch with a lookup table, or changing escapeRe would all pass. Changing the entity form for `\"` (e.g. to `&#34;`) would fail, but that is observable output, not an internal refactor.",
+        "symptom": "nothing",
+        "confidence": "high",
+        "notes": "Cheap, fail-closed, and exercises the real behaviour with no mocks. It is thin: `&`, `'`, the no-match early-return path, and appending to a non-empty buffer are untested, and `raw`, `stringBufferToString`, `resolveCallback`, and `resolveCallbackSync` have no coverage here (they may be covered indirectly by JSX tests). Keep, ideally extending with those cases."
+      }
+    ],
+    "rating": 30,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/body.test.ts",
+    "score": 1.4,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping `.toLowerCase()` from the media-type check fails the two mixed-case tests; narrowing the prototype-pollution regex to `/^__proto__\\./` fails the nested `a.__proto__.polluted` tests; changing `> MAX_NESTING_DEPTH + 1` to `>=` fails the 32-levels-allowed test; forgetting `delete form[key]` after dot-parsing fails every dot test with a leftover flat key. All are one-token slips that would ship real regressions.",
+        "refactor": "Only rewording the 'Nesting limit exceeded' error message breaks three tests. Everything else goes through the public parseBody with real Request/FormData/URLSearchParams and zero mocks, so renaming, extracting, or reordering the internal helpers (handleParsingAllValues, handleParsingNestedValues, convertFormDataToBodyData) leaves the file green.",
+        "symptom": "Nothing. The module has a clean pure-ish surface (Request in, plain object out) and the file exercises it black-box, including the security-relevant limits (nesting depth, object count, __proto__ skipping) and the exported type contract via expectTypeOf.",
+        "confidence": "high",
+        "notes": "A few cases are near-duplicates ('should not parse multiple values in default' vs 'should override value if all is false'; 'should parse nested values if dot is true' vs the mixed nested/non-nested case) and could be folded, but the marginal cost is tiny. Scorer's 'clean' is right; this is one of the better files in the suite."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/adapter/index.test.ts",
+    "score": 1.3,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 42,
+        "verdict": "keep",
+        "bug": "In getRuntimeKey, returning the matched user-agent string instead of the key (return userAgent as Runtime) would make the runtime test see 'Node.js' rather than 'node'. For env, dropping or breaking the T & C['env'] return type (e.g. returning Record<string, unknown>) would fail the three expectTypeOf<string> checks under the tsc pass that runs before vitest.",
+        "refactor": "none. Reordering the detection checks in getRuntimeKey, switching startsWith to includes, or renaming internal helpers all still yield 'node' via either the UA path or the process.release fallback, and the type tests only pin the public signature of env.",
+        "symptom": "Missing dependency injection in getRuntimeKey: it reads navigator, process, EdgeRuntime and fastly straight off globalThis, so the only assertion possible is 'the ambient runtime is node', and the deno/workerd/fastly/edge-light branches are unreachable here. env does accept a runtime parameter but the file never uses it, so its per-runtime handlers (workerd returning c.env, fastly returning {}) are untested.",
+        "confidence": "high",
+        "notes": "Cheap and fail-closed: the tsc-then-vitest pipeline makes the type tests real guards on a public generic signature that has regressed before, and the runtime test is a smoke check with two independent detection paths, so it rarely fails on real bugs. Worth extending with env(c, 'workerd') / env(c, 'fastly') cases rather than deleting."
+      }
+    ],
+    "rating": 42,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/middleware/compress/index.test.ts",
+    "score": 1.3,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Treating q=0 as acceptable in selectEncoding (e.g. `q >= 0` instead of `q > 0`) would compress on `Accept-Encoding: gzip;q=0` and fail the q=0 tests; forgetting `headers.delete('Content-Length')` after piping through CompressionStream would fail the Content-Length tests; a substring Vary check (`/accept-encoding/i` without token anchors) or dropping the `current !== '*'` guard would fail the Vary tests; not wrapping the strong ETag would fail the ETag tests.",
+        "refactor": "none. Every assertion goes through app.request against the public middleware and checks response headers, status, or the decompressed body. Renaming selectEncoding/shouldTransform, reordering the eligibility checks, or extracting the Vary logic cannot break it. The only brittle spot is the exact 13000-byte SSE assertion, which couples to streamSSE's wire format rather than to compress itself.",
+        "symptom": "nothing. The file is a straightforward black-box behavioural suite; a few weak expects (`toBeDefined()` on a header that returns null when absent) and routes that set contradictory headers (Transfer-Encoding plus Content-Length) are minor sloppiness, not a structural problem.",
+        "confidence": "high",
+        "notes": "Fail-closed, mock-free, and each test pins one RFC-relevant decision (negotiation, no-transform, 206, Vary, ETag weakening). Slight redundancy (Content-Length removal is asserted twice) but cheap to keep."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/url.test.ts",
+    "score": 1.1,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 10,
+        "verdict": "keep",
+        "bug": "Breaking the '#' (charCode 35) branch in getPath so the fragment is included in the path fails the 'with fragment' tests; dropping Object.create(null) in _getQueryParam fails the __proto__ test; off-by-one in the unencoded-key fast path (e.g. matching 'name' against 'name0') fails the name0/name1 assertions.",
+        "refactor": "Changing the internal cache-key format in getPattern (e.g. separator other than '#') fails 'regex pattern with next', since the test asserts the cache key leaks out as the first tuple element. Otherwise the file only exercises exported functions on literal inputs and is refactor-safe.",
+        "symptom": "Nothing. Pure functions with literal input/output tables. Minor hygiene nit: the last line of the getQueryParam test is a bare expect() with no matcher and never fails.",
+        "confidence": "high",
+        "notes": "Cheap, fail-closed behavioural coverage of a hand-optimized URL parser that has had real bugs (fragments, %23, __proto__), each of which has a regression case here. Only the getPattern cache-key assertion couples to an implementation detail."
+      }
+    ],
+    "rating": 10,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/helper/ssg/utils.test.ts",
+    "score": 1,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 8,
+        "verdict": "keep",
+        "bug": "Dropping the climbsAboveOutDir check in ensureWithinOutDir (or having handleParent pop a trailing '..' instead of pushing another) would let '../../pwned.txt' pass with outDir '..', and the 'climb above a parent outDir' and '..','..' -> '../..' assertions would catch it. Likewise removing the getPathRoot comparison would let '/out/index.html' pass for outDir './out'; the absoluteness test fails.",
+        "refactor": "none. Both functions are pure string-in/string-out; tests never touch normalizePath, handleSegments, getUncRoot or getPathRoot directly, so extracting, inlining, or reordering internals cannot break them. Only a rename of the exported functions would, which is not behaviour-preserving for callers either.",
+        "symptom": "nothing. Pure, dependency-free path utilities with a security-critical traversal guard; this is exactly the shape of code that deserves a dense example table.",
+        "confidence": "high",
+        "notes": "Real security regression tests (UNC roots, drive letters, prefix-collision 'static-evil', consecutive parents) that fail closed and cost nothing to maintain. Minor nit: the 22-expect joinPaths block stops at the first failure and hides later mismatches; splitting it into it.each would improve diagnostics but does not change the verdict."
+      }
+    ],
+    "rating": 8,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  },
+  {
+    "file": "src/utils/accept.test.ts",
+    "score": 0.8,
+    "finding": "clean",
+    "reasons": [],
+    "reads": [
+      {
+        "rating": 10,
+        "verdict": "keep",
+        "bug": "Dropping the inQuotes tracking in skipInvalidAcceptValue or the escape handling in getNextParam (e.g. treating a backslash-quote as the closing quote) would break 'handles comma inside quoted parameter value' and 'handles escaped quote and semicolon inside quoted parameter'; likewise replacing Object.create(null) with {} fails the __proto__ test, and letting parseQuality return raw Number(qVal) fails the extreme-q test.",
+        "refactor": "none — every assertion goes through the single public parseAccept and checks observable output; renaming, extracting, or restructuring the helper functions (consumeWhitespace, getNextParam, etc.) cannot fail it. Only changes to observable malformed-input semantics (e.g. clamping q>1 to 1 instead of resetting to 1, or keeping the 'e' param from the junk-quoted case) would fail, and those are behaviour changes, not refactors.",
+        "symptom": "nothing; this is a hand-rolled byte-level parser whose whole value is edge-case handling, and the file reads as accumulated regression tests for real parsing bugs (quoted commas, escaped quotes, unbalanced quotes, prototype pollution) rather than coverage padding.",
+        "confidence": "high",
+        "notes": "Cheap, fast, zero mocks, one pure-function entry point, and most cases pin down a specific past or plausible parser bug. A few tests (malformed q range check, not.toThrow injection cases) are weak individually but cost nothing."
+      }
+    ],
+    "rating": 10,
+    "verdict": "keep",
+    "disagree": false,
+    "errors": []
+  }
+]

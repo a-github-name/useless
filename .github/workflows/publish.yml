@@ -1,0 +1,115 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      npm_tag:
+        description: npm dist-tag
+        required: true
+        default: latest
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      npm_tag: ${{ steps.package.outputs.npm_tag }}
+      should_publish: ${{ steps.package.outputs.should_publish }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - id: package
+        env:
+          NPM_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_tag || 'latest' }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          should_publish=false
+          if ! npm view useless-tests name >/dev/null 2>&1; then
+            echo '::notice::The first npm release needs an authenticated bootstrap publish.'
+          elif ! npm view "useless-tests@${version}" version >/dev/null 2>&1; then
+            should_publish=true
+          fi
+          {
+            echo "version=${version}"
+            echo "npm_tag=${NPM_TAG}"
+            echo "should_publish=${should_publish}"
+          } >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: version
+    if: needs.version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm check:package
+      - name: Pack release artifact
+        run: npm pack --ignore-scripts
+      - name: Smoke-test exact tarball
+        run: |
+          tarballs=(useless-tests-*.tgz)
+          test "${#tarballs[@]}" -eq 1
+          node scripts/test-pack.mjs --tarball "${tarballs[0]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-package
+          path: useless-tests-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  npm:
+    needs: [version, package]
+    if: needs.version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@12.0.2
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-package
+      - name: Publish verified package
+        env:
+          NPM_TAG: ${{ needs.version.outputs.npm_tag }}
+        run: npm publish ./*.tgz --access public --tag "$NPM_TAG" --ignore-scripts
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_TAG: ${{ needs.version.outputs.npm_tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          args=(--repo "$GITHUB_REPOSITORY" --title "useless-tests ${tag}" --generate-notes)
+          if [[ "$NPM_TAG" != latest ]]; then
+            args+=(--prerelease)
+          fi
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" "${args[@]}"
+          fi

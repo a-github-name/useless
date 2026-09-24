@@ -43,6 +43,8 @@ export type Signals = {
   countPins: number;
   deletedFileAsserts: number;
   gatedSuites: number;
+  /** Gates on a GPU, an external binary, model files, or an environment opt-in (Swift). */
+  dependencyGates: number;
   /** Gates that depend on this machine: a path existing, the home directory, a local env var. */
   machineGates: number;
   gitShellouts: number;
@@ -68,6 +70,8 @@ export type Signals = {
   coChangeCommits: number;
   durationMs: number | null;
   failed: boolean;
+  /** Per-test rows, when the file was parsed. */
+  units?: UnitSignals[];
 };
 
 /**
@@ -93,7 +97,16 @@ export type SignalName =
   | 'environment'
   | 'skipped';
 
-export type Scored = Signals & {
+/** One `it`/`test` block, analysed as its own text with the file as context. */
+export type UnitSignals = Omit<Signals, 'units'> & {
+  name: string;
+  /** Suite titles and the test title joined with spaces, as test runners report it. */
+  fullName: string;
+  line: number;
+  endLine: number;
+};
+
+export type Verdict = {
   /** 0–100; higher is more useless. */
   score: number;
   /** Each normalised signal in [0, 1], before weighting. */
@@ -101,6 +114,10 @@ export type Scored = Signals & {
   reasons: string[];
   finding: Finding;
 };
+
+export type ScoredUnit = UnitSignals & Verdict;
+
+export type Scored = Omit<Signals, 'units'> & Verdict & { units: ScoredUnit[] };
 
 export type Timing = { durationMs: number; failed: boolean };
 

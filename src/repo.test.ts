@@ -6,12 +6,14 @@ import { describe, expect, it } from 'vitest';
 import { rank } from './index.js';
 import {
   buildChurnIndex,
+  buildSourceIndex,
   churnFor,
   findDuplicates,
   findSharedBlocks,
   findSimilar,
   listTestFiles,
   parseTimings,
+  parseXunitTimings,
   resolveModuleText,
   siblingSource,
 } from './repo.js';
@@ -86,15 +88,19 @@ describe('repo plumbing', () => {
     ]);
   });
 
-  it('drops test-directory files that contain no tests', () => {
-    expect(rank({ root }).map((r) => r.file)).not.toContain('test/support.js');
-    expect(rank({ root }).map((r) => r.file)).toContain('test/app.js');
-    expect(rank({ root }).map((r) => r.file)).toContain('src/__tests__/util.js');
+  it('drops test-directory files that contain no tests', async () => {
+    const files = (await rank({ root })).map((r) => r.file);
+    expect(files).not.toContain('test/support.js');
+    expect(files).toContain('test/app.js');
+    expect(files).toContain('src/__tests__/util.js');
   });
 
-  it('finds the co-located source by name', () => {
+  it('finds the co-located source by name, or one folder up from a tests directory', () => {
     expect(siblingSource(root, 'src/add.test.ts')).toBe('src/add.ts');
     expect(siblingSource(root, 'src/grep.spec.ts')).toBeNull();
+    expect(siblingSource(root, 'src/__tests__/add.test.ts')).toBe('src/add.ts');
+    expect(siblingSource(root, 'src/tests/add.test.ts')).toBe('src/add.ts');
+    expect(siblingSource(root, 'src/other/add.test.ts')).toBeNull();
   });
 
   it('computes co-change churn from git history', () => {
@@ -111,8 +117,8 @@ describe('repo plumbing', () => {
     });
   });
 
-  it('ranks the source-grepping test above the real one', () => {
-    const rows = rank({ root });
+  it('ranks the source-grepping test above the real one', async () => {
+    const rows = await rank({ root });
     expect(rows[0]?.file).toBe('src/grep.spec.ts');
     expect(rows[0]?.finding).toBe('restates-implementation');
     expect(rows.find((r) => r.file === 'src/add.test.ts')?.finding).toBe('clean');
@@ -204,6 +210,103 @@ describe('findSharedBlocks', () => {
       { file: 'b.test.ts', text: mk(2) },
     ]);
     expect(pair.size).toBe(0);
+  });
+});
+
+function makeSwiftRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), 'useless-swift-'));
+  git(root, 'init', '-q');
+  const write = (file: string, text: string): void => {
+    mkdirSync(join(root, file, '..'), { recursive: true });
+    writeFileSync(join(root, file), text);
+  };
+  write('Package.swift', '// swift-tools-version: 6.0\n');
+  write('Sources/Core/Adder.swift', 'public func add(_ a: Int, _ b: Int) -> Int { a + b }\n');
+  write('Sources/Core/Commands/PullCommand.swift', 'struct PullCommand {\n    func run() {}\n}\n');
+  write('Sources/Core/Shape.swift', 'struct Shape {}\n');
+  write('Sources/Other/Shape.swift', 'struct Shape {}\n');
+  write(
+    'Tests/CoreTests/AdderTests.swift',
+    'import XCTest\nfinal class AdderTests: XCTestCase {\n    func testAdds() {\n        XCTAssertEqual(add(1, 2), 3)\n    }\n}\n',
+  );
+  write(
+    'Tests/CoreTests/PullCommandParsingTests.swift',
+    'import XCTest\nfinal class PullCommandParsingTests: XCTestCase {\n    func testParses() {\n        XCTAssertEqual(PullCommand().name, "pull")\n    }\n}\n',
+  );
+  write(
+    'Tests/OtherTests/ShapeTests.swift',
+    'import Testing\n@Test func area() {\n    #expect(Shape().area == 0)\n}\n',
+  );
+  write('Tests/CoreTests/TestSupport.swift', 'func makeFixture() -> Int { 1 }\n');
+  write('Tests/CoreTests/Fixtures/Sample.swift', 'func testLooking() {}\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-q', '-m', 'one');
+  return root;
+}
+
+describe('swift packages', () => {
+  const root = makeSwiftRepo();
+
+  it('lists swift test files under *Tests/ and drops helpers and fixtures', async () => {
+    expect(listTestFiles(root)).toEqual([
+      'Tests/CoreTests/AdderTests.swift',
+      'Tests/CoreTests/PullCommandParsingTests.swift',
+      'Tests/CoreTests/TestSupport.swift',
+      'Tests/OtherTests/ShapeTests.swift',
+    ]);
+    const files = (await rank({ root })).map((r) => r.file);
+    expect(files).not.toContain('Tests/CoreTests/TestSupport.swift');
+    expect(files).toHaveLength(3);
+  });
+
+  it('resolves the source by name, preferring the test target module and stripping a trailing word', () => {
+    const index = buildSourceIndex(root);
+    expect(index.get('Shape.swift')).toEqual([
+      'Sources/Core/Shape.swift',
+      'Sources/Other/Shape.swift',
+    ]);
+    expect(siblingSource(root, 'Tests/CoreTests/AdderTests.swift', index)).toBe(
+      'Sources/Core/Adder.swift',
+    );
+    expect(siblingSource(root, 'Tests/OtherTests/ShapeTests.swift', index)).toBe(
+      'Sources/Other/Shape.swift',
+    );
+    expect(siblingSource(root, 'Tests/CoreTests/PullCommandParsingTests.swift', index)).toBe(
+      'Sources/Core/Commands/PullCommand.swift',
+    );
+    expect(siblingSource(root, 'Tests/CoreTests/NopeTests.swift', index)).toBeNull();
+    expect(siblingSource(root, 'Tests/CoreTests/AdderTests.swift')).toBeNull();
+  });
+
+  it('scores swift files and joins xunit timings by class name', async () => {
+    const xml =
+      '<testsuites><testsuite name="CoreTests"><testcase classname="CoreTests.AdderTests" name="testAdds" time="1.5"/><testcase classname="CoreTests.AdderTests" name="testMore" time="0.25"><failure message="boom"/></testcase></testsuite></testsuites>';
+    const rows = await rank({ root, timings: parseXunitTimings(xml) });
+    const adder = rows.find((r) => r.file === 'Tests/CoreTests/AdderTests.swift');
+    expect(adder?.source).toBe('Sources/Core/Adder.swift');
+    expect(adder?.tests).toBe(1);
+    expect(adder?.expects).toBe(1);
+    expect(adder?.durationMs).toBe(1750);
+    expect(adder?.failed).toBe(true);
+    expect(adder?.finding).toBe('clean');
+    const shape = rows.find((r) => r.file === 'Tests/OtherTests/ShapeTests.swift');
+    expect(shape?.tests).toBe(1);
+    expect(shape?.durationMs).toBeNull();
+  });
+});
+
+describe('parseXunitTimings', () => {
+  it('sums testcase times per class and flags failures and errors', () => {
+    const xml = [
+      '<testcase classname="M.ATests" name="a" time="0.5"/>',
+      '<testcase classname="M.ATests" name="b" time="0.5"></testcase>',
+      '<testcase classname="M.BTests" name="c" time="2"><error message="x"/></testcase>',
+      '<testcase name="orphan" time="9"/>',
+    ].join('\n');
+    const timings = parseXunitTimings(xml);
+    expect(timings.get('ATests')).toEqual({ durationMs: 1000, failed: false });
+    expect(timings.get('BTests')).toEqual({ durationMs: 2000, failed: true });
+    expect(timings.size).toBe(2);
   });
 });
 

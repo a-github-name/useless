@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      web-tree-sitter:
+        specifier: 0.22.6
+        version: 0.22.6
     devDependencies:
       '@biomejs/biome':
         specifier: 1.9.4
@@ -650,6 +654,9 @@ packages:
       jsdom:
         optional: true
 
+  web-tree-sitter@0.22.6:
+    resolution: {integrity: sha512-hS87TH71Zd6mGAmYCvlgxeGDjqd9GTeqXNqTT+u0Gs51uIozNIaaq/kUAbV/Zf56jb2ZOyG8BxZs2GG9wbLi6Q==}
+
   why-is-node-running@2.3.0:
     resolution: {integrity: sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==}
     engines: {node: '>=8'}
@@ -1138,6 +1145,8 @@ snapshots:
       - terser
       - tsx
       - yaml
+
+  web-tree-sitter@0.22.6: {}
 
   why-is-node-running@2.3.0:
     dependencies:

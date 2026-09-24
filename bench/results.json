@@ -1,0 +1,66 @@
+[
+  {
+    "name": "swift-argument-parser",
+    "files": 58,
+    "filesWithOwn": 0,
+    "units": 555,
+    "unitsInReport": 540,
+    "unitsMatched": 524,
+    "fileOwn": null,
+    "fileAll": 0.009,
+    "unit": 0.092,
+    "flaggedUnits": 0,
+    "flaggedUnitKill": null,
+    "cleanUnits": 506,
+    "cleanUnitKill": 0.336,
+    "byFinding": {},
+    "byUnitFinding": {
+      "clean": {
+        "units": 506,
+        "kill": 0.336
+      }
+    },
+    "readRho": null,
+    "readsUsed": 0,
+    "join": {
+      "mutants": 300,
+      "killed": 194,
+      "survivedCovered": 47,
+      "noCoverage": 0,
+      "tests": 562,
+      "matchedUnits": 524
+    }
+  },
+  {
+    "name": "mere-run",
+    "files": 411,
+    "filesWithOwn": 0,
+    "units": 3956,
+    "unitsInReport": 1104,
+    "unitsMatched": 1104,
+    "fileOwn": null,
+    "fileAll": null,
+    "unit": -0.115,
+    "flaggedUnits": 0,
+    "flaggedUnitKill": null,
+    "cleanUnits": 357,
+    "cleanUnitKill": 0.022,
+    "byFinding": {},
+    "byUnitFinding": {
+      "clean": {
+        "units": 357,
+        "kill": 0.022
+      }
+    },
+    "readRho": null,
+    "readsUsed": 0,
+    "join": {
+      "mutants": 80,
+      "killed": 25,
+      "survivedCovered": 50,
+      "noCoverage": 0,
+      "tests": 1109,
+      "matchedUnits": 1104
+    }
+  }
+]

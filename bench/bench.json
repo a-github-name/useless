@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "name": "hono",
+      "root": "hono",
+      "mutation": "reports/hono.json.gz",
+      "commit": "e2740d5a1bd0b4254e517e3af8b60789284bc7bd",
+      "note": "src/utils, src/helper, src/middleware; vitest; 12 min at concurrency 6",
+      "reads": "reads/hono.json"
+    },
+    {
+      "name": "immer",
+      "root": "immer",
+      "mutation": "reports/immer.json.gz",
+      "commit": "061c2425e1c9dff89e4e4189d42af1b7839dfe0a",
+      "note": "src/**; vitest; 11 min"
+    },
+    {
+      "name": "express",
+      "root": "express",
+      "mutation": "reports/express.json.gz",
+      "commit": "023767fe9872e029271df1418f73401bff20ff40",
+      "note": "lib/**; mocha, in place; 7 min"
+    },
+    {
+      "name": "zod",
+      "root": "zod",
+      "mutation": "reports/zod.json.gz",
+      "commit": "7a00236683c79000dbab0d92f6faf0b7fba39f59",
+      "note": "packages/zod/src/v4/core; vitest, in place; 53 min"
+    },
+    {
+      "name": "react-hook-form",
+      "root": "react-hook-form",
+      "mutation": "reports/react-hook-form.json.gz",
+      "commit": "61cd8d121aec9cb7ac2d73392c9bcd34a57b1360",
+      "note": "src/**; jest + jsdom via jest.stryker.config.js (Web project only), in place; 80 min"
+    },
+    {
+      "name": "swift-argument-parser",
+      "root": "swift-argument-parser",
+      "mutation": "reports/swift-argument-parser.json.gz",
+      "commit": "b53c2f0138a387f3c21d543d7bbfc9d008d6fb1d",
+      "note": "Sources/ArgumentParser; useless mutate, 300 sampled of 946 covered-line mutants; ~20 min"
+    },
+    {
+      "name": "mere-run",
+      "root": "/Users/nerd/mere/mere-run",
+      "mutation": "reports/mere-run.json.gz",
+      "commit": "2a3dd86c0ac05511c77aeeab07e6eb1426f3541c",
+      "note": "Sources/MereRunCLI/{Commands,Support}; useless mutate --filter MereRunCLITests, 80 sampled of 12,357; ~35 min"
+    }
+  ]
+}
