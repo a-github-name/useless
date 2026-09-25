@@ -505,6 +505,7 @@ export function analyzeUnits(input: AnalyzeInput, fileSignals: Signals): UnitSig
       fullName: unit.fullName,
       line: unit.startLine,
       endLine: unit.endLine,
+      staticCases: unit.staticCases,
       tests: 1,
       moduleMocks: fileSignals.moduleMocks,
       mocks: own.mocks + fileSignals.moduleMocks,

@@ -5,9 +5,11 @@ export {
   findSimilar,
   listTestFiles,
   parseTimings,
+  parseNodeJunitTimings,
   parseXunitTimings,
   resolveModuleText,
   siblingSource,
+  unsupportedStandaloneFiles,
 } from './repo.js';
 export type { CollectOptions } from './repo.js';
 export { flattenUnits, markdownTable, summarize, summaryLines, unitTable } from './report.js';

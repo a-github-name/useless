@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { type Facts, type ReadCall, derivedFrom, extractFacts, initAst } from './ast.js';
+import { flattenUnits, summarize, summaryLines, unitTable } from './report.js';
+import { score } from './score.js';
 import { analyzeTest } from './signals.js';
 import type { Churn } from './types.js';
 
@@ -55,6 +57,56 @@ describe('extractFacts', () => {
       ['todo'],
     ]);
     expect(facts?.units[0]).toMatchObject({ startLine: 3, endLine: 3 });
+  });
+
+  it('counts literal registration tables without evaluating imported data', () => {
+    const facts = extractFacts(
+      'src/table.test.ts',
+      [
+        "for (const mode of ['a', 'b'] as const) {",
+        "  test('plain', () => {});",
+        "  for (const size of [1, 2, 3]) test('nested', () => {});",
+        '}',
+        "test.each([[1], [2]])('table %s', () => {});",
+        "for (const item of importedCases) test('dynamic', () => {});",
+        "test.each(importedCases)('dynamic table', () => {});",
+        "if (process.env.RUN) test('conditional', () => {});",
+      ].join('\n'),
+    );
+    expect(facts?.units.map((u) => [u.name, u.staticCases])).toEqual([
+      ['plain', 2],
+      ['nested', 6],
+      ['table %s', 2],
+      ['dynamic', null],
+      ['dynamic table', null],
+      ['conditional', null],
+    ]);
+  });
+
+  it('reports bounded case expansion separately from scored registration sites', async () => {
+    const { analyzeUnits } = await import('./signals.js');
+    const text = [
+      "for (const item of [1, 2, 3]) test('literal', () => expect(item).toBeDefined());",
+      "for (const item of importedCases) test('dynamic', () => expect(item).toBeDefined());",
+    ].join('\n');
+    const input = {
+      file: 'src/table.test.ts',
+      text,
+      facts: extractFacts('src/table.test.ts', text),
+      source: null,
+      sourceText: null,
+      churn,
+      timing: null,
+    };
+    const file = analyzeTest(input);
+    const row = score({ ...file, units: analyzeUnits(input, file) });
+    const summary = summarize([row]);
+    expect(summary.tests).toBe(2);
+    expect(summary.staticCaseExpansion).toBe(2);
+    expect(summary.dynamicCaseSites).toBe(1);
+    expect(summaryLines(summary).join('\n')).toContain('runtime data or control flow');
+    expect(unitTable(flattenUnits([row]))).toContain('| cases |');
+    expect(unitTable(flattenUnits([row]))).toContain(' ? |');
   });
 
   it('parses expect chains: negation, soft, resolves, literal kinds', () => {

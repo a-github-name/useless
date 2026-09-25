@@ -36,14 +36,37 @@ Fold runtime into the score by handing it a JSON report first:
 npx vitest run --reporter=json --outputFile=.vitest.json
 npx useless-tests --timings .vitest.json
 
+node --test --test-reporter=junit --test-reporter-destination=.node-junit.xml tests/*.test.js
+npx useless-tests --timings .node-junit.xml
+
 swift test --parallel --xunit-output .xunit.xml     # Swift packages
 npx useless-tests --timings .xunit.xml
 ```
 
+For Node JUnit, the cost signal uses the sum of testcase durations for each
+file. This is aggregate case time, which can differ from file wall time when
+tests run concurrently. Without a report, duration remains unknown and adds
+no runtime cost to the score.
+
+To inspect standalone JavaScript or TypeScript verifier scripts, pass narrow
+Git path patterns and `--standalone`:
+
+```sh
+npx useless-tests --standalone --pattern '*verify-*.ts' --pattern '*verify-*.mjs'
+```
+
+These scripts appear as file rows with `kind` set to `script` and zero test
+call sites. Local `assert(...)` calls contribute to the assertion signals. A
+script with no local assertion calls receives `review`: checks in imported
+functions, thrown errors, and exit status need a manual read. Python scripts
+are not parsed or scored; the CLI names unsupported files selected by your
+patterns on stderr. `--per-test` lists registered test blocks, so it does not
+show standalone scripts.
+
 ## What comes out
 
 ```
-534 test files · 122423 lines · 2737 tests · 12643 expects (10% weak) · 1414 mocks (158 module mocks)
+534 test files · 122423 lines · 2737 test call sites · 12643 expects (10% weak) · 1414 mocks (158 module mocks)
 score median 6 · p90 14.6 · 105 lines of setup duplicated across 2 files
 restates-implementation: 9 · external-dependency: 1 · oversized-unit: 9 · transcribes-fixture: 9 · review: 6 · clean: 500 · tests flagged on their own: 205 of 2736
 
@@ -74,6 +97,15 @@ context (module mocks, tmpdir setup, fake timers, suite gates and the sibling
 source belong to the file), scored with the same rules, and reported under
 `units` in the JSON. A file whose tests restate the implementation says so
 in its reasons, and three or more of them move a clean file to `review`.
+
+The `tests` field and `--per-test` rows count source registration sites. A
+runner can execute more cases when one site sits inside a loop or uses
+`test.each(...)`. For literal array tables and `for...of` loops, the JSON
+`staticCases` field records the number of cases represented by a site, and
+the summary reports the extra statically expanded cases. A `null` value means
+runtime data or control flow determines the count. The scanner does not run
+test modules or turn repeated registrations into separate scored rows. Compare
+with a runner report to establish the executed count.
 
 ## The four ways a test is useless
 

@@ -234,5 +234,12 @@ function evaluate(signals: Omit<Signals, 'units'>): Verdict {
   )
     finding = 'review';
 
+  if (signals.standalone && signals.expects === 0) {
+    reasons.push(
+      'no local assertion calls found; imported checks and control flow need a manual read',
+    );
+    if (finding === 'clean') finding = 'review';
+  }
+
   return { score: Math.round(total * 10) / 10, components, reasons, finding };
 }

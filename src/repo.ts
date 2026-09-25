@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { extractFacts, initAst } from './ast.js';
 import { TEST_FILE_RE, analyzeTest, analyzeUnits } from './signals.js';
 import { analyzeSwiftUnits } from './swift.js';
@@ -36,22 +36,40 @@ function git(root: string, args: string[]): string {
 }
 
 const CODE_RE = /\.[cm]?[jt]sx?$|\.swift$/;
+const JS_TS_RE = /\.[cm]?[jt]sx?$/;
+
+/** Tracked paths selected by explicit standalone patterns that have no supported parser. */
+export function unsupportedStandaloneFiles(root: string, patterns: string[]): string[] {
+  return git(root, ['ls-files', '--', ...patterns])
+    .split('\n')
+    .filter((file) => file && (!CODE_RE.test(file) || /\.d\.[cm]?ts$/.test(file)));
+}
 
 /**
  * Tracked test files, relative to `root`, via `git ls-files`. Files under a
  * test directory count when they are code and not obviously a helper or
  * fixture; `collectRepo` later drops anything with no test blocks.
  */
-export function listTestFiles(root: string, patterns = DEFAULT_PATTERNS): string[] {
+export function listTestFiles(
+  root: string,
+  patterns = DEFAULT_PATTERNS,
+  includeStandalone = false,
+): string[] {
   const seen = new Set<string>();
   return git(root, ['ls-files', '--', ...patterns])
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => {
-      if (!line || seen.has(line) || !CODE_RE.test(line) || /node_modules\//.test(line))
+      if (
+        !line ||
+        seen.has(line) ||
+        !CODE_RE.test(line) ||
+        /\.d\.[cm]?ts$/.test(line) ||
+        /node_modules\//.test(line)
+      )
         return false;
       seen.add(line);
-      return TEST_FILE_RE.test(line) || !NOT_A_TEST_RE.test(line);
+      return includeStandalone || TEST_FILE_RE.test(line) || !NOT_A_TEST_RE.test(line);
     });
 }
 
@@ -275,10 +293,37 @@ export function parseXunitTimings(xml: string): Map<string, Timing> {
   return timings;
 }
 
+/** Sum Node's JUnit testcase times by source file. This is case time, not file wall time. */
+export function parseNodeJunitTimings(xml: string, root: string): Map<string, Timing> {
+  const timings = new Map<string, Timing>();
+  const canonical = (path: string): string =>
+    existsSync(path) ? realpathSync(path) : resolve(path);
+  const absRoot = canonical(root);
+  for (const match of xml.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    const attrs = new Map<string, string>();
+    for (const attr of (match[1] ?? '').matchAll(/(\w+)="([^"]*)"/g))
+      attrs.set(attr[1] ?? '', attr[2] ?? '');
+    const raw = attrs
+      .get('file')
+      ?.replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"');
+    const seconds = Number(attrs.get('time'));
+    if (!raw || !Number.isFinite(seconds) || seconds < 0) continue;
+    const file = isAbsolute(raw) ? relative(absRoot, canonical(raw)) : raw;
+    const previous = timings.get(file) ?? { durationMs: 0, failed: false };
+    timings.set(file, {
+      durationMs: previous.durationMs + Math.round(seconds * 1000),
+      failed: previous.failed || /<(failure|error)\b/.test(match[2] ?? ''),
+    });
+  }
+  return timings;
+}
+
 export function loadTimings(path: string | undefined, root: string): Map<string, Timing> {
   if (!path) return new Map();
   const text = readFileSync(path, 'utf8');
   if (!text.trimStart().startsWith('<')) return parseTimings(text, root);
+  if (/<testcase\b[^>]*\bfile="/.test(text)) return parseNodeJunitTimings(text, root);
   // SwiftPM writes Swift Testing results beside the XCTest file.
   const sibling = path.replace(/\.xml$/, '-swift-testing.xml');
   const timings = parseXunitTimings(text);
@@ -293,6 +338,8 @@ export type CollectOptions = {
   timings?: Map<string, Timing>;
   /** Parse JS/TS files with tree-sitter (default true); false keeps the regex-only analysis. */
   ast?: boolean;
+  /** Include JS/TS scripts with no test blocks from explicit patterns. */
+  standalone?: boolean;
 };
 
 /** Map each file to the first file (in listing order) with identical whitespace-stripped content. */
@@ -412,11 +459,13 @@ export function findSharedBlocks(
 /** Read every test file in the repo and extract its signals. */
 export async function collectRepo(options: CollectOptions): Promise<Signals[]> {
   const root = resolve(options.root);
+  if (options.standalone && !options.patterns?.length)
+    throw new Error('standalone scanning requires explicit patterns');
   const useAst = options.ast !== false;
   if (useAst) await initAst();
   const churn = buildChurnIndex(root);
   const timings = options.timings ?? new Map<string, Timing>();
-  const files = listTestFiles(root, options.patterns).map((file) => ({
+  const files = listTestFiles(root, options.patterns, options.standalone).map((file) => ({
     file,
     text: readFileSync(join(root, file), 'utf8'),
   }));
@@ -443,10 +492,17 @@ export async function collectRepo(options: CollectOptions): Promise<Signals[]> {
       similarTo: duplicates.has(file) ? null : (similar.get(file) ?? null),
     };
     const signals = analyzeTest(input);
+    if (
+      options.standalone &&
+      signals.tests === 0 &&
+      JS_TS_RE.test(file) &&
+      !TEST_FILE_RE.test(file)
+    )
+      signals.standalone = true;
     if (input.facts) signals.units = analyzeUnits(input, signals);
     else if (file.endsWith('.swift')) signals.units = analyzeSwiftUnits(input, signals);
     return signals;
   });
   // A file under test/ with no test blocks is a helper or fixture, not a test.
-  return signals.filter((row) => row.tests > 0 || TEST_FILE_RE.test(row.file));
+  return signals.filter((row) => row.tests > 0 || TEST_FILE_RE.test(row.file) || row.standalone);
 }
