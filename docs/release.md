@@ -29,6 +29,16 @@ publish. The [GitHub release](https://github.com/a-github-name/useless/releases/
 includes the tarball and its SHA-256 checksum. The registry tarball matched
 the tested tarball byte for byte.
 
+## First trusted publisher release
+
+Version `0.3.0` was published from merge commit
+`732bb584abe8929f3f16844911beabb6b65ceef1` through the `publish.yml`
+trusted publisher. The workflow built and smoke-tested the tarball before
+publishing it with signed provenance. The npm registry SHA-1
+(`6c23a41b94123f9c5e97e13e6c0759130e92b829`) matches the workflow
+artifact. The [GitHub release](https://github.com/a-github-name/useless/releases/tag/v0.3.0)
+tag points to the same merge commit.
+
 ## Publish later releases
 
 The npm package has a GitHub Actions trusted publisher configured with:
@@ -41,6 +51,5 @@ The npm package has a GitHub Actions trusted publisher configured with:
 Increase the version in `package.json` and merge the release commit into
 `main`. The repository's `publish.yml` checks for a version absent from npm,
 builds and smoke-tests a tarball, publishes that same tarball through npm OIDC, and
-creates a matching GitHub release. It needs no npm token. This workflow was
-configured after `0.2.0`; its first OIDC publication has not yet run. See the
+creates a matching GitHub release. It needs no npm token. See the
 [npm trusted publishing guide](https://docs.npmjs.com/trusted-publishers/).
