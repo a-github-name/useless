@@ -323,6 +323,32 @@ describe('splitSwiftUnits', () => {
     ]);
   });
 
+  it('keeps Swift raw strings and nested comments inside their test methods', async () => {
+    const { splitSwiftUnits } = await import('./swift.js');
+    const text = [
+      'final class RecoveryTests: XCTestCase {',
+      '    func testRawEvent() {',
+      '        let tail = Data(#"{"sequence":1,"type":"node_"#.utf8)',
+      '        let more = ##"{"nested": "}"}"##',
+      '        /* { outer /* } inner */ still commented } */',
+      '        XCTAssertEqual(tail.count, 2)',
+      '    }',
+      '    func testAfterRawEvent() {',
+      '        let document = #"""',
+      '        { "value": "}" }',
+      '        """#',
+      '        XCTAssertNotNil(document)',
+      '    }',
+      '}',
+    ].join('\n');
+    expect(
+      splitSwiftUnits(text).map((unit) => [unit.fullName, unit.startLine, unit.endLine]),
+    ).toEqual([
+      ['RecoveryTests.testRawEvent', 2, 7],
+      ['RecoveryTests.testAfterRawEvent', 8, 13],
+    ]);
+  });
+
   it('scores each Swift test on its own, inheriting only helper gates', async () => {
     const { analyzeSwiftUnits } = await import('./swift.js');
     const text = [

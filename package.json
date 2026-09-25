@@ -1,6 +1,6 @@
 {
   "name": "useless-tests",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Rank a repo's test files by how useless they are: cost carried versus regressions they can plausibly catch.",
   "type": "module",
   "license": "MIT",

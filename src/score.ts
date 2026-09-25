@@ -13,6 +13,8 @@ export const WEIGHTS: Record<SignalName, number> = {
 
 export const FINDING_ORDER: Finding[] = [
   'duplicate',
+  'overlapping-tests',
+  'source-inspection',
   'restates-implementation',
   'external-dependency',
   'oversized-unit',
@@ -23,9 +25,13 @@ export const FINDING_ORDER: Finding[] = [
 
 /** What each finding usually means to do. The reader decides; this is a prompt, not a verdict. */
 export const FINDING_GUIDANCE: Record<Finding, string> = {
-  duplicate: 'read both files together; check whether each protects a distinct contract',
+  duplicate: 'read both identical files and check whether each protects a distinct contract',
+  'overlapping-tests':
+    'read both files; shared lines do not prove that they exercise the same entry point',
+  'source-inspection':
+    'check whether the source text protects an independent contract or only the current implementation',
   'restates-implementation':
-    'check whether these assertions protect an independent contract or only the current implementation',
+    'check whether these assertions would fail for a plausible behavior regression',
   'external-dependency': 'check the contract and whether the unit suite is the right place for it',
   'oversized-unit': 'inspect the module and test boundaries before splitting either',
   'transcribes-fixture': 'check whether exact output is the contract or incidental fixture data',
@@ -55,6 +61,7 @@ export function score(signals: Signals): Scored {
 }
 
 function evaluate(signals: Omit<Signals, 'units'>): Verdict {
+  if (signals.standalone) return evaluateStandalone(signals);
   const reasons: string[] = [];
   const tests = Math.max(1, signals.tests);
   const expects = Math.max(1, signals.expects);
@@ -127,7 +134,7 @@ function evaluate(signals: Omit<Signals, 'units'>): Verdict {
 
   if (signals.duplicateOf) reasons.push(`identical to ${signals.duplicateOf}`);
   else if (signals.similarTo && shared >= 0.5)
-    reasons.push(`${pct(shared)} of its lines also appear in ${signals.similarTo.file}`);
+    reasons.push(`${pct(shared)} of its distinct lines also appear in ${signals.similarTo.file}`);
   if (linesPerTest > 80) reasons.push(`${Math.round(linesPerTest)} lines per test`);
   if (durationMs > 10_000) reasons.push(`${Math.round(durationMs / 1000)}s runtime`);
 
@@ -197,16 +204,20 @@ function evaluate(signals: Omit<Signals, 'units'>): Verdict {
     total += components[name] * WEIGHTS[name];
 
   let finding: Finding = 'clean';
-  if (signals.duplicateOf || shared >= 0.9) finding = 'duplicate';
+  const inspectionShare = Math.max(signals.sourceTextAsserts, signals.repoTextAsserts) / expects;
+  const inspectionContribution =
+    (signals.sourceTextAsserts * 2 + signals.repoTextAsserts * 1.5) / expects;
+  const otherTautology =
+    signals.sqlTextAsserts / expects + (signals.gitShellouts * 3) / expects + callShare;
+  if (signals.duplicateOf) finding = 'duplicate';
+  else if (shared >= 0.9) finding = 'overlapping-tests';
   else if (
-    tautology > 0.6 ||
-    signals.machineGates > 0 ||
-    // Reading repo source is only damning when those assertions dominate the
-    // file: a large test that reads one source file among forty behavioural
-    // assertions is not a source grep.
-    (signals.repoTextAsserts >= 5 && signals.repoTextAsserts / expects >= 0.5)
+    signals.machineGates === 0 &&
+    inspectionShare >= 0.5 &&
+    inspectionContribution >= otherTautology
   )
-    finding = 'restates-implementation';
+    finding = 'source-inspection';
+  else if (otherTautology > 0.6 || signals.machineGates > 0) finding = 'restates-implementation';
   else if (signals.pythonShellouts > 0 || signals.dependencyGates >= Math.ceil(tests / 2))
     finding = 'external-dependency';
   else if (
@@ -234,12 +245,37 @@ function evaluate(signals: Omit<Signals, 'units'>): Verdict {
   )
     finding = 'review';
 
-  if (signals.standalone && signals.expects === 0) {
+  return { score: Math.round(total * 10) / 10, components, reasons, finding };
+}
+
+/** A verifier script has no test cases, so test assertion heuristics do not apply. */
+function evaluateStandalone(signals: Omit<Signals, 'units'>): Verdict {
+  const cost = signals.duplicateOf
+    ? 1
+    : clamp(clamp(signals.lines / 120) * 0.6 + clamp((signals.durationMs ?? 0) / 20_000) * 0.4);
+  const components: Record<SignalName, number> = {
+    tautology: 0,
+    weak: 0,
+    mockBurden: 0,
+    cost,
+    mirror: 0,
+    environment: 0,
+    skipped: 0,
+  };
+  const reasons: string[] = [];
+  if (signals.duplicateOf) reasons.push(`identical to ${signals.duplicateOf}`);
+  if (signals.lines > 80) reasons.push(`${signals.lines} lines in script`);
+  if ((signals.durationMs ?? 0) > 10_000)
+    reasons.push(`${Math.round((signals.durationMs ?? 0) / 1000)}s runtime`);
+  if (signals.expects === 0)
     reasons.push(
       'no local assertion calls found; imported checks and control flow need a manual read',
     );
-    if (finding === 'clean') finding = 'review';
-  }
-
-  return { score: Math.round(total * 10) / 10, components, reasons, finding };
+  else reasons.push('review exit paths, imported checks, and control flow');
+  return {
+    score: Math.round(cost * WEIGHTS.cost * 10) / 10,
+    components,
+    reasons,
+    finding: signals.duplicateOf ? 'duplicate' : 'review',
+  };
 }

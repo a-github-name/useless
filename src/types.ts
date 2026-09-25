@@ -58,7 +58,7 @@ export type Signals = {
   focused: number;
   /** Another test file whose whitespace-stripped content is identical. */
   duplicateOf: string | null;
-  /** Another test file sharing most of this file's distinct lines, and the share. */
+  /** Another test file containing a share of this file's distinct lines. */
   similarTo: { file: string; share: number } | null;
   /** Lines of this file that belong to a block repeated in three or more test files. */
   sharedHarnessLines: number;
@@ -83,6 +83,8 @@ export type Signals = {
  */
 export type Finding =
   | 'duplicate'
+  | 'overlapping-tests'
+  | 'source-inspection'
   | 'restates-implementation'
   | 'external-dependency'
   | 'oversized-unit'

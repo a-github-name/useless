@@ -55,13 +55,15 @@ Git path patterns and `--standalone`:
 npx useless-tests --standalone --pattern '*verify-*.ts' --pattern '*verify-*.mjs'
 ```
 
-These scripts appear as file rows with `kind` set to `script` and zero test
-call sites. Local `assert(...)` calls contribute to the assertion signals. A
-script with no local assertion calls receives `review`: checks in imported
-functions, thrown errors, and exit status need a manual read. Python scripts
-are not parsed or scored; the CLI names unsupported files selected by your
-patterns on stderr. `--per-test` lists registered test blocks, so it does not
-show standalone scripts.
+These scripts appear as file rows with zero test call sites. The Markdown
+table shows `script` in its `kind` column; JSON rows use `standalone: true`.
+Script scores measure file size and supplied runtime only. Scripts get
+`review` because local assertion calls cannot establish what their imported
+checks, thrown errors, and exit paths verify. Identical scripts get
+`duplicate` instead. Compare script scores with other scripts, not test scores.
+Python scripts are not parsed or scored; the CLI names
+unsupported files selected by your patterns on stderr. `--per-test` lists
+registered test blocks, so it does not show standalone scripts.
 
 ## What comes out
 
@@ -217,13 +219,23 @@ reading the file. The last column is a prompt for that reading.
 
 | Finding | Trigger | Usually means |
 |---|---|---|
-| `duplicate` | identical to another test file, or ≥90% of its distinct lines appear in one | read both files; check whether each protects a distinct contract |
-| `restates-implementation` | tautology > 0.6, a suite gated on this machine, or repo-source greps that are ≥5 assertions **and** at least half the file's assertions | check whether these assertions protect an independent contract or only the current implementation |
+| `duplicate` | identical to another test file | read both files; check whether each protects a distinct contract |
+| `overlapping-tests` | ≥90% of this file's distinct lines occur in another test file | read both files; shared lines do not prove that they exercise the same entry point |
+| `source-inspection` | assertions over repository files dominate the test | check whether the source text protects an independent contract or only the current implementation |
+| `restates-implementation` | tautology > 0.6 from other signals, or a suite gated on this machine | check whether these assertions would fail for a plausible behavior regression |
 | `external-dependency` | spawns python/uv, or (Swift) at least half its tests skip unless a GPU, a binary, model files, or an environment opt-in is present | check the contract and whether the unit suite is the right place for it |
 | `oversized-unit` | source > 1,500 lines and (mock burden > 0.5, weak > 0.5, or the test itself > 1,000 lines). A sibling that is a re-export barrel is followed to the modules behind it | inspect the module and test boundaries before splitting either |
 | `transcribes-fixture` | ≥50% of the file is literal expectation across ≥5 blocks; ≥3 file snapshots covering half the tests; ≥5 digest pins; literal-only asserts on a data module | check whether exact output is the contract or incidental fixture data |
 | `review` | score ≥ 35, ≥10 module mocks, a committed `.only`, or ≥70% of its lines shared with another test file | worth a human read; the reasons say why |
 | `clean` | everything else | no signal worth acting on |
+
+`source-inspection` reports maintenance coupling to repository text. A test
+that scans for credentials or checks a documented interface can still protect
+an independent contract.
+
+The calibration counts that follow were recorded before `source-inspection`
+and `overlapping-tests` became separate findings. Their labels describe those
+earlier runs.
 
 
 ### Known false positives
@@ -309,9 +321,8 @@ pasted into 44 of them; no single file looked expensive, which is why the
 per-file similarity signal alone did not surface it.
 
 Parallel copies by design, such as the same smoke test kept in both esm and cjs
-form, still show up as duplicates. The reason names the partner file, so the
-reader sees the esm/cjs pairing immediately; the scorer does not try to guess
-intent.
+form, still show up as `overlapping-tests` unless their text is identical.
+The reason names the partner file; the scorer does not try to guess intent.
 
 #### Mutation testing
 

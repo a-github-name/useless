@@ -46,7 +46,10 @@ For a Node test runner, create a JUnit report with
 and pass it with `--timings`. The reported file duration is the sum of case
 times, not necessarily file wall time. To review standalone JS/TS verifier
 scripts, use explicit `--pattern` globs with `--standalone`; read any imported
-checks and exit conditions yourself. Python verifiers are outside this scan.
+checks and exit conditions yourself. Script scores use file size and supplied
+runtime only. The Markdown `kind` column identifies scripts; JSON rows use
+`standalone: true`. Compare script scores with other scripts, not test scores.
+Python verifiers are outside this scan.
 
 If a Stryker report exists (or the suite is small enough to make one:
 `coverageAnalysis: "perTest"`, `disableBail: true`, json reporter), pass it with
@@ -91,12 +94,16 @@ instruction: the tool cannot know whether a test should be deleted, and saying
 so on regex evidence would overstate what it can see. Findings and what they
 usually mean:
 
-- `duplicate`: identical to another test file, or nearly. A `review` with
-  "N% of its lines also appear in X" is a fork or a copy-pasted harness; read
-  both files together.
-- `restates-implementation`: the scorer found repo-source greps, bare
-  "mock was called" assertions, or a gate tied to one machine. Check whether
-  these are the test's only independent proof before deciding what to change.
+- `duplicate`: identical to another test file. Read both files to check
+  whether they protect distinct contracts.
+- `overlapping-tests`: at least 90% of one file's distinct lines occur in
+  another. Read both entry points before deciding whether the tests repeat
+  behavior.
+- `source-inspection`: assertions over repository files dominate the test.
+  Check whether they protect an independent policy or pin the implementation.
+- `restates-implementation`: bare "mock was called" assertions, SQL text
+  pins, Git history checks, or a gate tied to one machine dominate the test.
+  Check whether a plausible behavior regression would fail it.
 - `external-dependency`: spawns python/uv, or (Swift) at least half its
   tests skip unless a GPU, a binary, model files, or an environment opt-in is
   present. Check the contract and whether this test belongs in the unit suite.
