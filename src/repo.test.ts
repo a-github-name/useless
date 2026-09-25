@@ -174,7 +174,7 @@ describe('repo plumbing', () => {
   it('ranks the source-grepping test above the real one', async () => {
     const rows = await rank({ root });
     expect(rows[0]?.file).toBe('src/grep.spec.ts');
-    expect(rows[0]?.finding).toBe('restates-implementation');
+    expect(rows[0]?.finding).toBe('source-inspection');
     expect(rows.find((r) => r.file === 'src/add.test.ts')?.finding).toBe('clean');
   });
 });

@@ -121,15 +121,21 @@ describe('score', () => {
     expect(dominated.finding).toBe('restates-implementation');
   });
 
-  it('repo-source greps are only damning when they dominate the file', () => {
+  it('labels dominant source inspection without guessing the contract value', () => {
     const dominated = score(withSignals({ repoTextAsserts: 20, expects: 22 }));
-    expect(dominated.finding).toBe('restates-implementation');
+    expect(dominated.finding).toBe('source-inspection');
+    const policy = score(withSignals({ sourceTextAsserts: 1, expects: 1, tests: 1 }));
+    expect(policy.finding).toBe('source-inspection');
     // A large behavioural test that happens to read one source file keeps its
     // finding: five greps among forty assertions is not a source grep.
     const incidental = score(withSignals({ repoTextAsserts: 5, expects: 40 }));
     expect(incidental.finding).toBe('clean');
     const one = score(withSignals({ repoTextAsserts: 1, expects: 40 }));
     expect(one.finding).toBe('clean');
+    const mixed = score(withSignals({ sourceTextAsserts: 4, expects: 10 }));
+    expect(mixed.finding).not.toBe('restates-implementation');
+    const machineGated = score(withSignals({ sourceTextAsserts: 12, machineGates: 1 }));
+    expect(machineGated.finding).toBe('restates-implementation');
   });
 
   it('"mock was called" assertions raise tautology in proportion', () => {
@@ -167,14 +173,15 @@ describe('score', () => {
     expect(s.reasons).toContain('pins SQL text ×8');
   });
 
-  it('near-duplicates raise cost and become delete-duplicate at 90% shared lines', () => {
+  it('labels high line overlap without claiming identical test behavior', () => {
     const near = score(withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.95 } }));
-    expect(near.finding).toBe('duplicate');
+    expect(near.finding).toBe('overlapping-tests');
+    expect(near.reasons).toContain('95% of its distinct lines also appear in src/a.test.ts');
     const partial = score(
       withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 }, lines: 400, weakExpects: 6 }),
     );
     expect(partial.finding).toBe('review');
-    expect(partial.reasons).toContain('70% of its lines also appear in src/a.test.ts');
+    expect(partial.reasons).toContain('70% of its distinct lines also appear in src/a.test.ts');
     expect(partial.components.cost).toBeGreaterThan(score(base).components.cost);
     const small = score(
       withSignals({ similarTo: { file: 'src/a.test.ts', share: 0.7 }, lines: 60, weakExpects: 6 }),
@@ -207,7 +214,7 @@ describe('score', () => {
     );
   });
 
-  it('duplicates are delete-duplicate with saturated cost', () => {
+  it('reserves duplicate for identical files', () => {
     const dup = score(withSignals({ duplicateOf: 'src/other.test.ts' }));
     expect(dup.finding).toBe('duplicate');
     expect(dup.components.cost).toBe(1);
@@ -230,6 +237,33 @@ describe('score', () => {
     expect(score(withSignals({ expects: 0, weakExpects: 0, literalExpects: 0 })).reasons).toContain(
       'no assertions found',
     );
+  });
+
+  it('scores standalone verifiers by cost and sends their control flow to review', () => {
+    const gitGuard = score(
+      withSignals({
+        file: 'scripts/check-lockfile-guard.mjs',
+        source: null,
+        sourceLines: null,
+        standalone: true,
+        lines: 33,
+        tests: 0,
+        expects: 0,
+        weakExpects: 0,
+        gitShellouts: 1,
+      }),
+    );
+    expect(gitGuard.finding).toBe('review');
+    expect(gitGuard.components.tautology).toBe(0);
+    expect(gitGuard.score).toBeLessThan(10);
+    expect(gitGuard.reasons).toContain(
+      'no local assertion calls found; imported checks and control flow need a manual read',
+    );
+    const sourceCheck = score(
+      withSignals({ standalone: true, tests: 0, expects: 2, sourceTextAsserts: 2 }),
+    );
+    expect(sourceCheck.finding).toBe('review');
+    expect(sourceCheck.components.tautology).toBe(0);
   });
 
   it('python shell-outs route to move-to-integration', () => {

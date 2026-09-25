@@ -293,20 +293,31 @@ const SWIFT_TESTING_ATTR_RE = /^\s*@Test\b/;
 const ANY_FUNC_RE =
   /^\s*(?:@\w+(?:\([^)\n]*\))?\s+)*(?:(?:private|fileprivate|internal|public|static|mutating)\s+)*func\s+([A-Za-z_]\w*)\s*\(/;
 
-/** Index of the brace that closes the block opened by the first `{` at or after `from`. */
+/** Index of the brace that closes the first code block at or after `from`. */
 function closingBrace(text: string, from: number): number {
   let depth = 0;
-  let i = text.indexOf('{', from);
-  if (i < 0) return -1;
-  let inString: '"' | '"""' | null = null;
-  for (; i < text.length; i += 1) {
+  let comments = 0;
+  let stringEnd = '';
+  let plainString = false;
+  for (let i = from; i < text.length; i += 1) {
     const ch = text[i];
-    if (inString) {
-      if (ch === '\\') i += 1;
-      else if (inString === '"""' && text.startsWith('"""', i)) {
-        inString = null;
-        i += 2;
-      } else if (inString === '"' && ch === '"') inString = null;
+    if (comments > 0) {
+      if (text.startsWith('/*', i)) {
+        comments += 1;
+        i += 1;
+      } else if (text.startsWith('*/', i)) {
+        comments -= 1;
+        i += 1;
+      }
+      continue;
+    }
+    if (stringEnd) {
+      if (plainString && ch === '\\') {
+        i += 1;
+      } else if (text.startsWith(stringEnd, i)) {
+        i += stringEnd.length - 1;
+        stringEnd = '';
+      }
       continue;
     }
     if (ch === '/' && text[i + 1] === '/') {
@@ -314,13 +325,23 @@ function closingBrace(text: string, from: number): number {
       if (i < 0) return -1;
       continue;
     }
-    if (ch === '"') {
-      inString = text.startsWith('"""', i) ? '"""' : '"';
-      if (inString === '"""') i += 2;
+    if (text.startsWith('/*', i)) {
+      comments = 1;
+      i += 1;
+      continue;
+    }
+    let quote = i;
+    while (text[quote] === '#') quote += 1;
+    if (text[quote] === '"') {
+      const hashes = quote - i;
+      const delimiter = text.startsWith('"""', quote) ? '"""' : '"';
+      stringEnd = delimiter + '#'.repeat(hashes);
+      plainString = hashes === 0;
+      i = quote + delimiter.length - 1;
       continue;
     }
     if (ch === '{') depth += 1;
-    else if (ch === '}') {
+    else if (ch === '}' && depth > 0) {
       depth -= 1;
       if (depth === 0) return i;
     }
